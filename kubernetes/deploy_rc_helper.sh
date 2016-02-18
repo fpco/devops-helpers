@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# kubernetes/update_helper.sh: Perform a rolling update of an application
+# kubernetes/deploy_rc_helper.sh: Perform a rolling update of an application
 #
 # REQUIRED ARGUMENTS:
 #
@@ -8,7 +8,7 @@
 #
 # --repo REPO: Docker image repository containing image to update to
 #
-# --specdir PATH: Directory containing app's replicationcontroller specification
+# --specdir PATH: Directory containing app's replication controller specification
 #     ('APP-ENV-rc.yaml')
 #
 # --app APP: Prefix of label of application to update
@@ -89,7 +89,7 @@ fi
 
 set -xe
 
-# Determine Docker image repo/tag and replicationcontroller name
+# Determine Docker image repo/tag and replication controller name
 
 [[ -n "$TAG" ]] || TAG="$("$(dirname "${BASH_SOURCE[0]}")/../docker/default_tags.sh" "$ENV"|head -1)"
 VER="${TRAVIS_BUILD_NUMBER:-${BUILD_NUMBER:-$(date +%Y%m%d%H%M%S)}}"
@@ -97,7 +97,7 @@ REPOTAG="$REPO:$TAG"
 APPENV="$APP0-$ENV"
 RC="$APPENV-v$VER"
 
-# Update the replicationcontroller spec file
+# Update the replication controller spec file
 
 TEMPSPEC="$(mktemp /tmp/spec.yaml.XXXXXX)"
 sed -E \
@@ -109,23 +109,24 @@ sed -E \
 
 # Update each cluster in turn
 
-export KUBECONFIG
 for KUBECONFIG in $CLUSTERS; do
-    true "KUBECONFIG=$KUBECONFIG"
+    export "KUBECONFIG=$KUBECONFIG"
 
-    # Find the old replicationcontroller
+    # Find the old replication controller
 
-    OLDRC="$(kubectl get replicationcontrollers -o name -l "app=$APPENV" | sed 's/.*\///')"
-    if [[ -z $OLDRC ]]; then
-        set +x
-        echo "${BASH_SOURCE[0]}: could not find existing RC for app '$APPENV'" >&2
-        exit 1
+    OLDRC="$(kubectl get rc -o name -l "app=$APPENV" | sed 's/.*\///')"
+    if [[ -n $OLDRC ]]; then
+
+        # Perform a rolling update, replacing the old replication controller
+        # with the new spec.
+
+        kubectl rolling-update "$OLDRC" -f "$TEMPSPEC"
+    else
+
+        # No existing replication controller found; create a new one
+
+        kubectl create -f "$TEMPSPEC"
     fi
-
-    # Perform a rolling update, replacing the old replicationcontroller with the new
-    # spec.
-
-    kubectl rolling-update "$OLDRC" -f "$TEMPSPEC"
 done
 
 # Send notification of successful update to Slack, if running under Travis CI
