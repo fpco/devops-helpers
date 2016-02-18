@@ -7,17 +7,18 @@
 # ENV: Environment name (e.g. "prod" or "test").  Defaults to "latest".
 #
 # If building under Travis CI, gives the image three tags:
-#   - :BRANCH[_PULLREQUEST]_[BUILDNUMBER]
-#   - :BRANCH[_PULLREQUEST]
+#   - :BRANCH[_PULLREQUEST][_BUILDNUMBER]_COMMITID
+#   - :BRANCH[_PULLREQUEST]_COMMITID
 #   - :ENV
 # For the latter, if the branch is 'master' and there is no pull request, the
 # second tag is set to 'latest' instead of 'master'.
 #
 # If building under Jenkins CI, gives the image two tags:
-#   - :ENV_[BUILDNUMBER]
+#   - :ENV[_BUILDNUMBER]_COMMITID
 #   - :ENV
 #
-# If not building under a CI system, gives the image one tag:
+# If not building under a CI system, gives the image two tags:
+#   - :ENV_COMMITID[-dirty]
 #   - :ENV
 #
 
@@ -28,5 +29,8 @@ if [[ $TRAVIS == true ]]; then
     [[ "$t" == "$ENV" ]] || echo "$t"
 elif [[ -n $JENKINS_HOME ]]; then
     echo "${ENV}_${BUILD_NUMBER}_$(git rev-parse HEAD)"
+else
+    dirty="$(git status --porcelain)"
+    echo "${ENV}_$(git rev-parse HEAD)${dirty:+-dirty}"
 fi
 echo "${ENV:-latest}"
