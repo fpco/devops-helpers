@@ -4,22 +4,26 @@
 #
 # REQUIRED ARGUMENTS:
 #
-# ENV: Environment name (e.g. "prod" or "test")
+#   ENV: Environment name (e.g. "prod" or "test")
 #
-# --repo REPO: Docker image repository containing image to update to
+#   --repo REPO: Docker image repository containing image to update to
 #
-# --specdir PATH: Directory containing app's replication controller specification
-#     ('APP-ENV-rc.yaml')
+#   --specdir PATH: Directory containing app's replication controller specification
+#       ('APP-ENV-rc.yaml')
 #
-# --app APP: Prefix of label of application to update
-#
-# --clusters PATH [PATH ...]: Path(s) to kubeconfigs for the cluster(s) to
-#     update
+#   --app APP: Prefix of label of application to update
 #
 # OPTIONAL ARGUMENTS
 #
-# --tag TAG: Tag of the image to deploy.
-#     Default is the first tag returned by ../docker/default_tags.sh
+#   --clusters PATH [PATH ...]: Path(s) to kubeconfigs for the cluster(s) to
+#       update.  Required unless DEPLOY_KUBE_CLUSTERS is set.
+#
+#   --tag TAG: Tag of the image to deploy.
+#       Default is the first tag returned by ../docker/default_tags.sh
+#
+# ENVIRONMENT VARIABLES
+#
+#   DEPLOY_KUBE_CLUSTERS: default value for '--clusters'
 #
 
 # Parse arguments
@@ -27,7 +31,7 @@
 APP0=
 REPO=
 SPECDIR=
-CLUSTERS=
+CLUSTERS="$DEPLOY_KUBE_CLUSTERS"
 TAG=
 ENV=
 while [[ $# > 0 ]]; do
