@@ -87,7 +87,7 @@ if [[ -z "$SPECDIR" ]]; then
     exit 1
 fi
 if [[ -z "$CLUSTERS" ]]; then
-    echo "${BASH_SOURCE[0]}: must specify --clusters" >&2
+    echo "${BASH_SOURCE[0]}: must specify --clusters or set DEPLOY_KUBE_CLUSTERS" >&2
     exit 1
 fi
 
