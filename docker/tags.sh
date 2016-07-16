@@ -6,16 +6,16 @@ show_help() {
 $(basename "${BASH_SOURCE[0]}"): determine tags to give image
 
 If building under Travis CI, gives the image three tags:
-  - REPO:[TAG_]BRANCH[_PULLREQUEST]_BUILDNUMBER
-  - REPO:[TAG_]BRANCH[_PULLREQUEST]
+  - REPO:[TAG_]BRANCH[_pr-PULLREQUEST]_build-BUILDNUMBER
+  - REPO:[TAG_]BRANCH[_pr-PULLREQUEST]
   - REPO:[TAG]
 
 If building under Jenkins CI, gives the image two tags:
-  - REPO:[TAG_]_BUILDNUMBER
+  - REPO:[TAG_]_build-BUILDNUMBER
   - REPO:[TAG]
 
 If not building under a CI system, gives the image two tags:
-  - REPO:[TAG_]COMMITID[-dirty]
+  - REPO:[TAG_]commit-COMMITID[-dirty]
   - REPO:[TAG]
 
 USAGE
@@ -71,15 +71,15 @@ if [[ -z "$REPO" ]]; then
 fi
 
 if [[ $TRAVIS == true ]]; then
-    echo "${REPO}:${TRAVIS_BRANCH//[^A-Za-z0-9_.-]/_}$([[ $TRAVIS_PULL_REQUEST == false ]] || echo _${TRAVIS_PULL_REQUEST})_${TRAVIS_BUILD_NUMBER}"
+    echo "${REPO}:${TRAVIS_BRANCH//[^A-Za-z0-9_.-]/_}$([[ $TRAVIS_PULL_REQUEST == false ]] || echo _pr-${TRAVIS_PULL_REQUEST})_build-${TRAVIS_BUILD_NUMBER}"
     if [[ $ONE == 0 ]]; then
-        t="${TRAVIS_BRANCH//[^A-Za-z0-9_.-]/_}$([[ $TRAVIS_PULL_REQUEST == false ]] || echo _${TRAVIS_PULL_REQUEST})"
+        t="${TRAVIS_BRANCH//[^A-Za-z0-9_.-]/_}$([[ $TRAVIS_PULL_REQUEST == false ]] || echo _pr-${TRAVIS_PULL_REQUEST})"
         [[ "$t" == "${TAG:-latest}" ]] || echo "${REPO}:${t}"
     fi
 elif [[ -n $JENKINS_HOME ]]; then
-    echo "${REPO}:${TAG}${TAG:+_}${BUILD_NUMBER}"
+    echo "${REPO}:${TAG}${TAG:+_}build-${BUILD_NUMBER}"
 else
     dirty="$(git status --porcelain)"
-    echo "${REPO}:${TAG}${TAG:+_}$(git rev-parse HEAD)${dirty:+-dirty}"
+    echo "${REPO}:${TAG}${TAG:+_}commit-$(git rev-parse HEAD)${dirty:+-dirty}"
 fi
 [[ $ONE == 1 ]] || echo "${REPO}:${TAG:-latest}"
