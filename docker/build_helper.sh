@@ -10,7 +10,7 @@ USAGE
 -----
 
 $(basename "${BASH_SOURCE[0]}") [--push] [--no-build] [--kube-deploy DEPLOYMENT CONTAINER]
-    [--tag TAG] REPO
+    REPO[:TAG]
 
 REQUIRED ARGUMENTS
 ------------------
@@ -20,15 +20,16 @@ REPO: Name of Docker repository to build/push/deploy
 OPTIONAL ARGUMENTS
 ------------------
 
+TAG: Tag prefix to give the image. The image will actually receive multiple tags
+    based on the build environment (CI job number or local Git commit ID). See
+    'tags.sh' for how image tags are generated.
+
 --no-build: Don't build the image (pointless without --push or --kube-deploy)
 
 --push: Push the image to a Docker registry after building
 
 --kube-deploy: Update a Kubernetes Deployment with the new image after pushing
     (implies --push)
-
---tag: Tag to give the image.  See `tags.sh` for how image tags are
-    generated.
 
 EOF
 }
@@ -39,25 +40,20 @@ BUILD=1
 PUSH=0
 KUBE_DEPLOYMENT=
 KUBE_CONTAINER=
-TAG=
 REPO=
-while [[ $# > 0 ]]; do
+while [[ $# -gt 0 ]]; do
     case "$1" in
         --push)
-             PUSH=1
-             ;;
+            PUSH=1
+            ;;
         --no-build)
-             BUILD=0
-             ;;
+            BUILD=0
+            ;;
         --kube-deploy)
-             KUBE_DEPLOYMENT="$2"
-             KUBE_CONTAINER="$3"
-             PUSH=1
-             shift; shift
-             ;;
-        --tag)
-            TAG="$2"
-            shift
+            KUBE_DEPLOYMENT="$2"
+            KUBE_CONTAINER="$3"
+            PUSH=1
+            shift; shift
             ;;
         *)
             if [[ "$1" == -* || -n "$REPO" ]]; then
@@ -73,13 +69,15 @@ while [[ $# > 0 ]]; do
     esac
     shift
 done
+
 if [[ -z "$REPO" ]]; then
     echo "${BASH_SOURCE[0]}: must specify REPO" >&2
     show_help
     exit 1
 fi
-TAGS="$("$(dirname "${BASH_SOURCE[0]}")/tags.sh" --tag "$TAG" "$REPO")"
-FIRST_TAG="$("$(dirname "${BASH_SOURCE[0]}")/tags.sh" -1 --tag "$TAG" "$REPO")"
+
+FIRST_TAG="$("$(dirname "${BASH_SOURCE[0]}")/tags.sh" -1 "$REPO")"
+TAGS="$("$(dirname "${BASH_SOURCE[0]}")/tags.sh" "$REPO")"
 
 # Build and tag the image
 if [[ $BUILD == 1 ]]; then

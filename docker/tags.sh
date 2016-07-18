@@ -21,19 +21,22 @@ If not building under a CI system, gives the image two tags:
 USAGE
 -----
 
-$(basename "${BASH_SOURCE[0]}") [-1|--one] [--tag TAG] REPO
+$(basename "${BASH_SOURCE[0]}") [-1|--one] [!]REPO[:TAG]
 
 REQUIRED ARGUMENTS
 ------------------
 
-REPO: Name of Docker repository
+REPO: Name of Docker repository.  If REPO is prefixed by '!', only the
+    *exact* tag specified will be output, and no environment-based tags will
+    be added.
 
 OPTIONAL ARGUMENTS
 ------------------
 
+TAG: add a prefix to the specific tags, and use TAG instead of 'latest'
+
 -1|--one: only emit the most specific tag
 
---tag: add a prefix to the specific tags, and use TAG instead of 'latest'
 EOF
 }
 
@@ -47,10 +50,6 @@ while [[ $# > 0 ]]; do
             ;;
         --one)
             ONE=1
-            ;;
-        --tag)
-            TAG="$2"
-            shift
             ;;
         *)
             if [[ "$1" == --* || -n "$REPO" ]]; then
@@ -68,6 +67,13 @@ if [[ -z "$REPO" ]]; then
     echo "${BASH_SOURCE[0]}: must specify REPO" >&2
     show_help
     exit 1
+fi
+if [[ "$REPO" == "!"* ]]; then
+    echo "${REPO:1}"
+    exit 0
+elif [[ "$REPO" == *":"* ]]; then
+    TAG="${REPO/#*:}"
+    REPO="${REPO/%:*}"
 fi
 
 if [[ $TRAVIS == true ]]; then
