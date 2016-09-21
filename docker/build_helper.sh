@@ -90,7 +90,7 @@ for tag in $TAGS; do
     if [[ "$tag" != "$FIRST_TAG" ]]; then
         echo
         echo ">>> Tagging with '$tag'"
-        docker tag -f "$FIRST_TAG" "$tag"
+        docker tag "$FIRST_TAG" "$tag"
     fi
 done
 
