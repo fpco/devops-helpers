@@ -21,6 +21,8 @@ Usage
         [--profile PROFILE|-p PROFILE] \\
         [--mfa-duration-seconds DURATION] \\
         [--role-duration-seconds DURATION] \\
+        [--mfa-refresh-factor PERCENT] \\
+        [--role-refresh-factor PERCENT] \\
         [COMMAND [ARGS ...]]
 
 Options
@@ -32,8 +34,16 @@ Options
 \`--mfa-duration-seconds DURATION\`: Set how long until the MFA session expires.
   This defaults to the maximum 129600 (36 hours).
 
-\`--role-duration-session DURATION\`: Set how long until the role session expires.
+\`--role-duration-seconds DURATION\`: Set how long until the role session expires.
   This defaults to the maximum 3600 (1 hour).
+
+\`--mfa-refresh-factor PERCENT\`: Percentage of MFA token duration at which to
+  refresh it. The default is to request a new token after 65% of the old token's
+  duration has passed.
+
+\`--role-refresh-factor PERCENT\`: Percentage of role token duration at which to
+  refresh it. The default is to request a new token after 35% of the old token's
+  duration has passed.
 
 Arguments
 ---------
@@ -80,11 +90,37 @@ http://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html
 and http://docs.aws.amazon.com/cli/latest/userguide/cli-roles.html for more
 details.
 
-File Locations
+Environment variables
+---------------------
+
+\`AWS_DEFAULT_PROFILE\`: AWS profile to use. Defaults to \`default\`.
+\`default\` is used.
+
+\`AWS_CONFIG_FILE\`: Location of the AWS config file. Defaults to
+\`~/.aws/config\`.
+
+\`AWS_ENV_CACHE_DIR\`: Location of cached credentials. Default to
+\`~/.aws/env/\`
+
+\`AWS_ENV_MFA_DURATION\`: Default MFA token duration. Defaults to 129600 (36
+hours).
+
+\`AWS_ENV_ROLE_DURATION\`: Default role token duration. Defaults to 3600 (1
+hour).
+
+\`AWS_ENV_MFA_REFRESH\`: Default MFA token refresh factor. Defaults to 65.
+hours).
+
+\`AWS_ENV_ROLE_REFRESH\`: Default role token refresh factor. Defaults to 35.
+hour).
+
+
+File locations
 --------------
 
-Temporary credentials are stored in \`~/.aws/env/\`, and configuration is read
-from \`~/.aws/config\`.
+By default, temporary credentials are stored in \`~/.aws/env/\`, and
+configuration is read from \`~/.aws/config\`. These locations can be overridden
+by environment variables.
 
 EOF
 }
@@ -93,11 +129,13 @@ EOF
 # Defaults
 #
 
-CREDENTIALS_DIR="$HOME/.aws/env"
+MFA_DURATION=${AWS_ENV_MFA_DURATION:-129600}
+ROLE_DURATION=${AWS_ENV_ROLE_DURATION:-3600}
+MFA_REFRESH=${AWS_ENV_MFA_REFRESH:-65}
+ROLE_REFRESH=${AWS_ENV_ROLE_REFRESH:-35}
+CACHE_DIR="${AWS_ENV_CACHE_DIR:-$HOME/.aws/env}"
 PROFILE="${AWS_DEFAULT_PROFILE:-default}"
 CONFIG_FILE="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
-MFA_DURATION=129600
-ROLE_DURATION=3600
 
 #
 # Parse command-line
@@ -131,6 +169,22 @@ while [[ $# -gt 0 ]]; do
             ;;
         --role-duration-seconds)
             ROLE_DURATION="$2"
+            shift 2
+            ;;
+        --mfa-refresh-factor=*)
+            MFA_REFRESH="${1#--mfa-refresh-factor=}"
+            shift
+            ;;
+        --mfa-refresh-factor)
+            MFA_REFRESH="$2"
+            shift 2
+            ;;
+        --role-refresh-factor=*)
+            ROLE_REFRESH="${1#--role-refresh-factor=}"
+            shift
+            ;;
+        --role-refresh-factor)
+            ROLE_REFRESH="$2"
             shift 2
             ;;
         -h)
@@ -199,17 +253,17 @@ export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TO
 # Create temporary files used to avoid race conditions
 #
 
-mkdir -p "$CREDENTIALS_DIR"
-CRED_TEMP="$(mktemp "$CREDENTIALS_DIR/temp_credentials.XXXXX")"
-EXPIRE_TEMP="$(mktemp "$CREDENTIALS_DIR/temp_expire.XXXXX")"
+mkdir -p "$CACHE_DIR"
+CRED_TEMP="$(mktemp "$CACHE_DIR/temp_credentials.XXXXX")"
+EXPIRE_TEMP="$(mktemp "$CACHE_DIR/temp_expire.XXXXX")"
 trap "rm -f \"$CRED_TEMP\" \"$EXPIRE_TEMP\"" EXIT
 
 #
 # Create or use cached temporary session
 #
 
-CRED_FILE="$CREDENTIALS_DIR/${SRC_PROFILE}_session_credentials.json"
-EXPIRE_FILE="$CREDENTIALS_DIR/${SRC_PROFILE}_session_expire"
+CRED_FILE="$CACHE_DIR/${SRC_PROFILE}_session_credentials.json"
+EXPIRE_FILE="$CACHE_DIR/${SRC_PROFILE}_session_expire"
 
 # If session credentials expired or non-existant, prompt for MFA code (if
 # required) and get a session token, and cache the session credentials.
@@ -226,8 +280,8 @@ if [[ ! -s "$CRED_FILE" || "$(date +%s)" -ge "$(cat "$EXPIRE_FILE" 2>/dev/null)"
 
     echo "$(basename "$0"): Getting session token${MFA_SERIAL:+ for $MFA_SERIAL}" >&2
 
-    # Record the expiry time in the temporary session expire file
-    echo "$(( $(date +%s) + MFA_DURATION - 1 ))" >"$EXPIRE_TEMP"
+    # Record the refresh time in the temporary session expire file
+    echo "$(( $(date +%s) + MFA_DURATION * MFA_REFRESH / 100 ))" >"$EXPIRE_TEMP"
 
     # Get the session token and save credentials in temporary credentials file
     aws --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} >"$CRED_TEMP"
@@ -250,16 +304,16 @@ AWS_SECURITY_TOKEN="$AWS_SESSION_TOKEN"
 #
 
 if [[ -n "$ROLE_ARN" ]]; then
-    CRED_FILE="$CREDENTIALS_DIR/${PROFILE}_role_credentials.json"
-    EXPIRE_FILE="$CREDENTIALS_DIR/${PROFILE}_role_expire"
+    CRED_FILE="$CACHE_DIR/${PROFILE}_role_credentials.json"
+    EXPIRE_FILE="$CACHE_DIR/${PROFILE}_role_expire"
 
     # If role credentials expired or non-existant, assume the role and cache the
     # credentials
     if [[ ! -s "$CRED_FILE" || "$(date +%s)" -ge "$(cat "$EXPIRE_FILE" 2>/dev/null)" ]]; then
         echo "$(basename "$0"): Assuming role $ROLE_ARN" >&2
 
-        # Record the expiry time in the assume-role expire temporary file
-        echo "$(( $(date +%s) + ROLE_DURATION - 1 ))" >"$EXPIRE_TEMP"
+        # Record the refresh time in the assume-role expire temporary file
+        echo "$(( $(date +%s) + ROLE_DURATION * ROLE_REFRESH / 100 ))" >"$EXPIRE_TEMP"
 
         # Assume the role and save role credentials in temporary credential file
         aws sts assume-role --duration-seconds="$ROLE_DURATION" --role-arn="$ROLE_ARN" --role-session-name="$(date +%Y%m%d-%H%M%S)" ${EXTERNAL_ID:+"--external-id=$EXTERNAL_ID"} >"$CRED_TEMP"
@@ -286,8 +340,8 @@ if [[ $# -gt 0 ]]; then
     exec "$@"
 else
     # If no command, output a script to be 'eval'd.
-    echo "export AWS_ACCESS_KEY_ID='$AWS_ACCESS_KEY_ID'"
-    echo "export AWS_SECRET_ACCESS_KEY='$AWS_SECRET_ACCESS_KEY'"
-    echo "export AWS_SESSION_TOKEN='$AWS_SESSION_TOKEN'"
-    echo "export AWS_SECURITY_TOKEN='$AWS_SECURITY_TOKEN'"
+    echo "export AWS_ACCESS_KEY_ID='$AWS_ACCESS_KEY_ID';"
+    echo "export AWS_SECRET_ACCESS_KEY='$AWS_SECRET_ACCESS_KEY';"
+    echo "export AWS_SESSION_TOKEN='$AWS_SESSION_TOKEN';"
+    echo "export AWS_SECURITY_TOKEN='$AWS_SECURITY_TOKEN';"
 fi
