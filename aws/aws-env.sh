@@ -12,7 +12,7 @@ This aims to be the "ultimate" AWS temporary session wrapper.  Highlights:
   prompted for MFA codes unnecessarily
 - Can be used either as a wrapper or \`eval\`'d
 - Uses the same configuration files as the AWS CLI
-- No dependencies except for the AWS CLI
+- Only non-standard dependency is the AWS CLI
 
 Usage
 -----
@@ -180,9 +180,9 @@ fi
 #
 
 ROLE_ARN="$(sed -ne '/^\['"$CONFIG_SECTION"'\]/,/^\[/p' "$CONFIG_FILE"|grep '^role_arn'|cut -d= -f2)"
-SRC_PROFILE="$(sed -ne '/\['"$CONFIG_SECTION"'\]/,/^\[/p' "$CONFIGFILE"|grep '^source_profile'|cut -d= -f2)"
-MFA_SERIAL="$(sed -ne '/^\['"$CONFIG_SECTION"'\]/,/^\[/p' "$CONFIGFILE"|grep '^mfa_serial'|cut -d= -f2)"
-EXTERNAL_ID="$(sed -ne '/^\['"$CONFIG_SECTION"'\]/,/^\[/p' "$CONFIGFILE"|grep '^external_id'|cut -d= -f2)"
+SRC_PROFILE="$(sed -ne '/\['"$CONFIG_SECTION"'\]/,/^\[/p' "$CONFIG_FILE"|grep '^source_profile'|cut -d= -f2)"
+MFA_SERIAL="$(sed -ne '/^\['"$CONFIG_SECTION"'\]/,/^\[/p' "$CONFIG_FILE"|grep '^mfa_serial'|cut -d= -f2)"
+EXTERNAL_ID="$(sed -ne '/^\['"$CONFIG_SECTION"'\]/,/^\[/p' "$CONFIG_FILE"|grep '^external_id'|cut -d= -f2)"
 [[ -z "$SRC_PROFILE" ]] && SRC_PROFILE="$PROFILE"
 
 #
@@ -196,12 +196,20 @@ unset AWS_SECURITY_TOKEN
 export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
 
 #
-# Create or use cached temporary session
+# Create temporary files used to avoid race conditions
 #
 
 mkdir -p "$CREDENTIALS_DIR"
-CRED_FILE="$CREDENTIALS_DIR/${SRC_PROFILE}_session.json"
-EXPIRE_FILE="$CREDENTIALS_DIR/${SRC_PROFILE}_session.expire"
+CRED_TEMP="$(mktemp "$CREDENTIALS_DIR/temp_credentials.XXXXX")"
+EXPIRE_TEMP="$(mktemp "$CREDENTIALS_DIR/temp_expire.XXXXX")"
+trap "rm -f \"$CRED_TEMP\" \"$EXPIRE_TEMP\"" EXIT
+
+#
+# Create or use cached temporary session
+#
+
+CRED_FILE="$CREDENTIALS_DIR/${SRC_PROFILE}_session_credentials.json"
+EXPIRE_FILE="$CREDENTIALS_DIR/${SRC_PROFILE}_session_expire"
 
 # If session credentials expired or non-existant, prompt for MFA code (if
 # required) and get a session token, and cache the session credentials.
@@ -218,18 +226,22 @@ if [[ ! -s "$CRED_FILE" || "$(date +%s)" -ge "$(cat "$EXPIRE_FILE" 2>/dev/null)"
 
     echo "$(basename "$0"): Getting session token${MFA_SERIAL:+ for $MFA_SERIAL}" >&2
 
-    # Record the expiry time in the session expire file
-    echo "$(( $(date +%s) + MFA_DURATION - 1 ))" >"$EXPIRE_FILE"
+    # Record the expiry time in the temporary session expire file
+    echo "$(( $(date +%s) + MFA_DURATION - 1 ))" >"$EXPIRE_TEMP"
 
-    # Get the session token and cache credentials in credentials file
-    aws --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} >"$CRED_FILE"
+    # Get the session token and save credentials in temporary credentials file
+    aws --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} >"$CRED_TEMP"
+
+    # Move the temporary files to their cached locations
+    mv "$CRED_TEMP" "$CRED_FILE"
+    mv "$EXPIRE_TEMP" "$EXPIRE_FILE"
 fi
 
 # Set the AWS_* credentials environment variables from values in the cached or
 # just-created session credentials file
-AWS_ACCESS_KEY_ID="$(grep AccessKeyId "$CREDFILE"|sed 's/.*: "\(.*\)".*/\1/')"
-AWS_SECRET_ACCESS_KEY="$(grep SecretAccessKey "$CREDFILE"|sed 's/.*: "\(.*\)".*/\1/')"
-AWS_SESSION_TOKEN="$(grep SessionToken "$CREDFILE"|sed 's/.*: "\(.*\)".*/\1/')"
+AWS_ACCESS_KEY_ID="$(grep AccessKeyId "$CRED_FILE"|sed 's/.*: "\(.*\)".*/\1/')"
+AWS_SECRET_ACCESS_KEY="$(grep SecretAccessKey "$CRED_FILE"|sed 's/.*: "\(.*\)".*/\1/')"
+AWS_SESSION_TOKEN="$(grep SessionToken "$CRED_FILE"|sed 's/.*: "\(.*\)".*/\1/')"
 AWS_SECURITY_TOKEN="$AWS_SESSION_TOKEN"
 
 #
@@ -238,25 +250,29 @@ AWS_SECURITY_TOKEN="$AWS_SESSION_TOKEN"
 #
 
 if [[ -n "$ROLE_ARN" ]]; then
-    CRED_FILE="$CREDENTIALS_DIR/${PROFILE}_role.json"
-    EXPIRE_FILE="$CREDENTIALS_DIR/${PROFILE}_role.expire"
+    CRED_FILE="$CREDENTIALS_DIR/${PROFILE}_role_credentials.json"
+    EXPIRE_FILE="$CREDENTIALS_DIR/${PROFILE}_role_expire"
 
     # If role credentials expired or non-existant, assume the role and cache the
     # credentials
     if [[ ! -s "$CRED_FILE" || "$(date +%s)" -ge "$(cat "$EXPIRE_FILE" 2>/dev/null)" ]]; then
         echo "$(basename "$0"): Assuming role $ROLE_ARN" >&2
 
-        # Record the expiry time in the assume-role expire file
-        echo "$(( $(date +%s) + ROLE_DURATION - 1 ))" >"$EXPIRE_FILE"
+        # Record the expiry time in the assume-role expire temporary file
+        echo "$(( $(date +%s) + ROLE_DURATION - 1 ))" >"$EXPIRE_TEMP"
 
-        # Assume the role and cache role credentials in credentials file
-        aws sts assume-role --duration-seconds="$ROLE_DURATION" --role-arn="$ROLE_ARN" --role-session-name="$(date +%Y%m%d-%H%M%S)" ${EXTERNAL_ID:+"--external-id=$EXTERNAL_ID"} >"$CRED_FILE"
+        # Assume the role and save role credentials in temporary credential file
+        aws sts assume-role --duration-seconds="$ROLE_DURATION" --role-arn="$ROLE_ARN" --role-session-name="$(date +%Y%m%d-%H%M%S)" ${EXTERNAL_ID:+"--external-id=$EXTERNAL_ID"} >"$CRED_TEMP"
+
+        # Move the temporary files to their cached locations
+        mv "$CRED_TEMP" "$CRED_FILE"
+        mv "$EXPIRE_TEMP" "$EXPIRE_FILE"
     fi
 
     # Set the AWS_* credentials environment variables from values in the cached or
     # just-created role credentials file
     AWS_ACCESS_KEY_ID="$(grep AccessKeyId "$CRED_FILE"|sed 's/.*: "\(.*\)".*/\1/')"
-    AWS_SECRET_ACCESS_KEY="$(grep SecretAccessKey "$CREDFILE"|sed 's/.*: "\(.*\)".*/\1/')"
+    AWS_SECRET_ACCESS_KEY="$(grep SecretAccessKey "$CRED_FILE"|sed 's/.*: "\(.*\)".*/\1/')"
     AWS_SESSION_TOKEN="$(grep SessionToken "$CRED_FILE"|sed 's/.*: "\(.*\)".*/\1/')"
     AWS_SECURITY_TOKEN="$AWS_SESSION_TOKEN"
 fi
