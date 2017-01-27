@@ -221,7 +221,7 @@ if [[ ! -s "$CRED_FILE" || "$(date +%s)" -ge "$(cat "$EXPIRE_FILE" 2>/dev/null)"
     # Prompt for MFA code if 'mfa_serial' set in config file
     if [[ -n "$MFA_SERIAL" ]]; then
         echo -n "$(basename "$0"): Enter MFA code for $MFA_SERIAL: " >&2
-        read -r MFA_CODE
+        read -r MFA_CODE </dev/tty
     fi
 
     echo "$(basename "$0"): Getting session token${MFA_SERIAL:+ for $MFA_SERIAL}" >&2
