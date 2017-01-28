@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-set -e
+set -eu
 
 show_help() {
     cat <<EOF
-# $(basename "$0"): Wrapper for AWS temporary sessions using MFA and roles
+# aws-env: Wrapper for AWS temporary sessions using MFA and roles
 
 This aims to be the "ultimate" AWS temporary session wrapper.  Highlights:
 
@@ -11,25 +11,36 @@ This aims to be the "ultimate" AWS temporary session wrapper.  Highlights:
 - Caches credentials so you can share between shell sessions and don't get
   prompted for MFA codes unnecessarily
 - Can be used either as a wrapper or \`eval\`'d
-- Uses the same configuration files as the AWS CLI
+- Uses the same configuration files as the AWS CLI, with some extensions
+- Supports directory context-sensitive configuration in \`aws-env.config\`
 - Only non-standard dependency is the AWS CLI
+
+To install the latest version, download from
+https://raw.githubusercontent.com/fpco/devops-helpers/master/aws/aws-env.sh and
+put it somewhere on your PATH with execute bits, preferably named \`aws-env\`.
 
 Usage
 -----
 
     $(basename "$0") \\
-        [--profile PROFILE|-p PROFILE] \\
+        [--help] \\
+        [--profile NAME|-p NAME] \\
+        [--role-arn ARN|-r ARN] \\
         [--mfa-duration-seconds DURATION] \\
-        [--role-duration-seconds DURATION] \\
         [--mfa-refresh-factor PERCENT] \\
+        [--role-duration-seconds DURATION] \\
         [--role-refresh-factor PERCENT] \\
         [COMMAND [ARGS ...]]
 
 Options
 -------
 
-\`--profile PROFILE\`: Set the AWS CLI profile to use. If not specified, uses the
+\`--help\`: Display this help text and exit.
+
+\`--profile NAME\`: Set the AWS CLI profile to use. If not specified, uses the
   value of AWS_DEFAULT_PROFILE or \`default\` if that is not set.
+
+\`--role-arn ARN\`: ARN of role to assume.  Overrides the profile's value.
 
 \`--mfa-duration-seconds DURATION\`: Set how long until the MFA session expires.
   This defaults to the maximum 129600 (36 hours).
@@ -37,12 +48,12 @@ Options
 \`--role-duration-seconds DURATION\`: Set how long until the role session expires.
   This defaults to the maximum 3600 (1 hour).
 
-\`--mfa-refresh-factor PERCENT\`: Percentage of MFA token duration at which to
-  refresh it. The default is to request a new token after 65% of the old token's
-  duration has passed.
-
 \`--role-refresh-factor PERCENT\`: Percentage of role token duration at which to
   refresh it. The default is to request a new token after 35% of the old token's
+  duration has passed.
+
+\`--mfa-refresh-factor PERCENT\`: Percentage of MFA token duration at which to
+  refresh it. The default is to request a new token after 65% of the old token's
   duration has passed.
 
 Arguments
@@ -56,7 +67,7 @@ session. For example:
 Without a COMMAND, prints \`export\` commands to stdout suitable for evaluating by
 the shell. For example:
 
-    eval \$($(basename "$0") -p admin)
+    eval \$(aws-env -p admin)
 
 Requirements
 ------------
@@ -67,8 +78,11 @@ http://docs.aws.amazon.com/cli/latest/userguide/installing.html.
 Configuration
 -------------
 
-$(basename "$0") uses the same configuration files as the AWS CLI, by default
-\`~/.aws/config\` and \`~/.aws/credentials\`.
+aws-env gets configuration from two places:
+- The AWS CLI configuration files, by default \`~/.aws/config\` and \`~/.aws/credentials\`.
+- Its own \`aws-env.config\` and \`aws-env.config\`
+
+### AWS CLI configuration file.
 
 \`~/.aws/credentials\` must contain the initial credentials for connecting to AWS.
 For example:
@@ -90,52 +104,156 @@ http://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html
 and http://docs.aws.amazon.com/cli/latest/userguide/cli-roles.html for more
 details.
 
+Some extensions are supported that the AWS CLI does not support:
+
+- Any profile, even those without a \`role_arn\` may specify an \`mfa_serial\`.
+  That means that if you don't use roles, aws-env can still prompt you for an
+  MFA code and set temporary credentials (unlike the AWS CLI). For example (in
+  \`~/.aws/config\`)
+
+        [profile signin]
+        mfa_serial=arn:aws:iam::987654321000:mfa/username
+
+- aws-env will use the \`mfa_serial\` from the \`source_profile\`, so you don't
+  need to repeat it in every role profile.
+
+### aws-env configuration
+
+The optional aws-env configuration files are read from the following locations,
+in order, with values in that come earlier overriding those that come later.
+
+- Current directory's \`.aws-env.config\`
+- Current directory's \`aws-env.config\`
+- Recursively in the parent directories' \`.aws-env.config\` and
+  \`aws-env.config\`s, until (and not including) $HOME or the root.
+- \`~/.aws-env.config\`
+
+Here's an example:
+
+    profile=signin
+    role_arn=arn:aws:iam::123456789000:role/admin
+    mfa_duration=43200
+    role_duration=1800
+    mfa_refresh=50
+    role_refresh=10
+
+The values correspond to the command-line options with the same names, so see
+the [Options](#options) section for details. Command-line arguments override any
+configuration in the aws-env config.
+
+A typical way to use this is to put an \`aws-env.config\` in the root of your
+project that specifies the role to assume when working on that project and name
+of a profile that has the credentials and MFA device, and commit that to the
+repository. As long as all users of the project have a consistent name for the
+credentials profile, they can just prefix any AWS-using command with \`aws-env\`
+and be sure it's run in the correct context. Users can add or override
+configuration locally using \`.aws-env.config\` (note: has a dot at the
+beginning).
+
+
 Environment variables
 ---------------------
 
-\`AWS_DEFAULT_PROFILE\`: AWS profile to use. Defaults to \`default\`.
+The following environment variables are read by aws-env:
+
+\`AWS_DEFAULT_PROFILE\`: AWS CLI profile to use. Defaults to \`default\`.
 \`default\` is used.
 
-\`AWS_CONFIG_FILE\`: Location of the AWS config file. Defaults to
+\`AWS_CONFIG_FILE\`: Location of the AWS CLI config file. Defaults to
 \`~/.aws/config\`.
 
-\`AWS_ENV_CACHE_DIR\`: Location of cached credentials. Default to
-\`~/.aws/env/\`
+\`AWS_ENV_CACHE_DIR\`: Location of cached credentials. Defaults to
+\`~/.aws-env/\`
 
-\`AWS_ENV_MFA_DURATION\`: Default MFA token duration. Defaults to 129600 (36
-hours).
+The following environment variables are **set** by aws-env:
 
-\`AWS_ENV_ROLE_DURATION\`: Default role token duration. Defaults to 3600 (1
-hour).
-
-\`AWS_ENV_MFA_REFRESH\`: Default MFA token refresh factor. Defaults to 65.
-hours).
-
-\`AWS_ENV_ROLE_REFRESH\`: Default role token refresh factor. Defaults to 35.
-hour).
-
+- \`AWS_ACCESS_KEY_ID\`
+- \`AWS_SECRET_ACCESS_KEY\`
+- \`AWS_SESSION_TOKEN\`
+- \`AWS_SECURITY_TOKEN\`
+- \`AWS_DEFAULT_REGION\`
 
 File locations
 --------------
 
-By default, temporary credentials are stored in \`~/.aws/env/\`, and
-configuration is read from \`~/.aws/config\`. These locations can be overridden
-by environment variables.
+By default, temporary credentials are stored in \`~/.aws-env/\`, AWS CLI
+configuration is read from \`~/.aws/config\`, and aws-env configuration is read
+from \`~/.aws-env.config\`.
 
 EOF
 }
 
 #
+# Constants
+#
+
+ENV_CONFIG_FILENAME=".aws-env.config"
+
+#
+# Functions
+#
+
+# Set AWS_* environment variables from a credentials JSON file output by 'aws sts'.
+load_cred_vars() {
+    AWS_ACCESS_KEY_ID="$(grep AccessKeyId "$1"|sed 's/.*: "\(.*\)".*/\1/')"
+    AWS_SECRET_ACCESS_KEY="$(grep SecretAccessKey "$1"|sed 's/.*: "\(.*\)".*/\1/')"
+    AWS_SESSION_TOKEN="$(grep SessionToken "$1"|sed 's/.*: "\(.*\)".*/\1/')"
+    AWS_SECURITY_TOKEN="$AWS_SESSION_TOKEN"
+}
+
+# Set configuration variables from an aws-env config file if they are not already set.
+load_env_config() {
+    if [[ -s "$1" ]]; then
+        if [[ -z "$PROFILE" ]]; then
+            PROFILE="$(grep '^profile' "$1"|cut -d= -f2)"
+            [[ -n "$PROFILE" ]] && PROFILE_SOURCE_CONFIG="$1"
+        fi
+        if [[ -z "$ROLE_ARN" ]]; then
+            ROLE_ARN="$(grep '^role_arn' "$1"|cut -d= -f2)"
+            [[ -n "$ROLE_ARN" ]] && ROLE_ARN_SOURCE_CONFIG="$1"
+        fi
+        [[ -z "$MFA_DURATION" ]] && \
+            MFA_DURATION="$(grep '^mfa_duration' "$1"|cut -d= -f2)"
+        [[ -z "$ROLE_DURATION" ]] && \
+            ROLE_DURATION="$(grep '^role_duration' "$1"|cut -d= -f2)"
+        [[ -z "$MFA_REFRESH" ]] && \
+            MFA_REFRESH="$(grep '^mfa_refresh' "$1"|cut -d= -f2)"
+        [[ -z "$ROLE_REFRESH" ]] && \
+            ROLE_REFRESH="$(grep '^role_refresh' "$1"|cut -d= -f2)"
+    fi
+}
+
+#
+# Read aws-env.configs
+#
+
+ROLE_ARN=
+ROLE_ARN_SOURCE_CONFIG=
+PROFILE=
+MFA_DURATION=
+ROLE_DURATION=
+MFA_REFRESH=
+ROLE_REFRESH=
+pushd . >/dev/null
+while [[ "$PWD" != "/" && "$PWD" != "$HOME" ]]; do
+    load_env_config "$PWD/.aws-env.config"
+    load_env_config "$PWD/aws-env.config"
+    cd ..
+done
+popd >/dev/null
+load_env_config "$HOME/.aws-env.config"
+
+#
 # Defaults
 #
 
-MFA_DURATION=${AWS_ENV_MFA_DURATION:-129600}
-ROLE_DURATION=${AWS_ENV_ROLE_DURATION:-3600}
-MFA_REFRESH=${AWS_ENV_MFA_REFRESH:-65}
-ROLE_REFRESH=${AWS_ENV_ROLE_REFRESH:-35}
-CACHE_DIR="${AWS_ENV_CACHE_DIR:-$HOME/.aws/env}"
-PROFILE="${AWS_DEFAULT_PROFILE:-default}"
-CONFIG_FILE="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
+[[ -z "$MFA_DURATION" ]] && MFA_DURATION=129600
+[[ -z "$ROLE_DURATION" ]] && ROLE_DURATION=3600
+[[ -z "$MFA_REFRESH" ]] && MFA_REFRESH=65
+[[ -z "$ROLE_REFRESH" ]] && ROLE_REFRESH=35
+CACHE_DIR="${AWS_ENV_CACHE_DIR:-$HOME/.aws-env}"
+[[ -z "$PROFILE" ]] && PROFILE="${AWS_DEFAULT_PROFILE:-default}"
+AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
 
 #
 # Parse command-line
@@ -153,6 +271,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         -p)
             PROFILE="$2"
+            shift 2
+            ;;
+        --role-arn=*)
+            ROLE_ARN="${1#--profile=}"
+            shift
+            ;;
+        --role-arn)
+            ROLE_ARN="$2"
+            shift 2
+            ;;
+        -r)
+            ROLE_ARN="$2"
             shift 2
             ;;
         --mfa-duration-seconds=*)
@@ -200,8 +330,8 @@ while [[ $# -gt 0 ]]; do
             break
             ;;
         -*)
-            echo "$(basename "$0"): Invalid argument: $1" >&2
-            echo "Run '$(basename "$0") --help' for usage information"
+            echo "[$(basename "$0")] Invalid argument: $1" >&2
+            echo "Run '$(basename "$0") --help' for usage information."
             exit 1
             ;;
         *)
@@ -211,11 +341,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 #
-# Friendly error if config file doesn't exist
+# Friendly error if AWS config file doesn't exist
 #
 
-if [[ ! -s $CONFIG_FILE ]]; then
-    echo "$(basename "$0"): Cannot find AWS CLI config file: $CONFIG_FILE" >&2
+if [[ ! -s $AWS_CONFIG_FILE ]]; then
+    echo "[$(basename "$0")] Cannot find AWS CLI config file: $AWS_CONFIG_FILE" >&2
     exit 1
 fi
 
@@ -224,20 +354,32 @@ fi
 #
 
 if [[ "$PROFILE" == "default" ]]; then
-    CONFIG_SECTION="default"
+    PROFILE_SECTION="default"
 else
-    CONFIG_SECTION="profile $PROFILE"
+    PROFILE_SECTION="profile $PROFILE"
 fi
 
 #
 # Read AWS config file
 #
 
-ROLE_ARN="$(sed -ne '/^\['"$CONFIG_SECTION"'\]/,/^\[/p' "$CONFIG_FILE"|grep '^role_arn'|cut -d= -f2)"
-SRC_PROFILE="$(sed -ne '/\['"$CONFIG_SECTION"'\]/,/^\[/p' "$CONFIG_FILE"|grep '^source_profile'|cut -d= -f2)"
-MFA_SERIAL="$(sed -ne '/^\['"$CONFIG_SECTION"'\]/,/^\[/p' "$CONFIG_FILE"|grep '^mfa_serial'|cut -d= -f2)"
-EXTERNAL_ID="$(sed -ne '/^\['"$CONFIG_SECTION"'\]/,/^\[/p' "$CONFIG_FILE"|grep '^external_id'|cut -d= -f2)"
+[[ -n "$ROLE_ARN" ]] || ROLE_ARN="$(sed -ne '/^\['"$PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^role_arn'|cut -d= -f2)"
+SRC_PROFILE="$(sed -ne '/\['"$PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^source_profile'|cut -d= -f2)"
+MFA_SERIAL="$(sed -ne '/^\['"$PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^mfa_serial'|cut -d= -f2)"
+EXTERNAL_ID="$(sed -ne '/^\['"$PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^external_id'|cut -d= -f2)"
+REGION="$(sed -ne '/^\['"$PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^region'|cut -d= -f2)"
 [[ -z "$SRC_PROFILE" ]] && SRC_PROFILE="$PROFILE"
+
+if [[ "$SRC_PROFILE" == "default" ]]; then
+    SRC_PROFILE_SECTION="default"
+else
+    SRC_PROFILE_SECTION="profile $SRC_PROFILE"
+fi
+
+[[ -z "$MFA_SERIAL" ]] && \
+    MFA_SERIAL="$(sed -ne '/^\['"$SRC_PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^mfa_serial'|cut -d= -f2)"
+[[ -z "$REGION" ]] && \
+    REGION="$(sed -ne '/^\['"$SRC_PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^region'|cut -d= -f2)"
 
 #
 # Ensure existing variables don't interfere with operation
@@ -247,7 +389,8 @@ unset AWS_ACCESS_KEY_ID
 unset AWS_SECRET_ACCESS_KEY
 unset AWS_SESSION_TOKEN
 unset AWS_SECURITY_TOKEN
-export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
+[[ -n "$REGION" ]] && AWS_DEFAULT_REGION="$REGION"
+export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN AWS_DEFAULT_REGION
 
 #
 # Create temporary files used to avoid race conditions
@@ -262,23 +405,22 @@ trap "rm -f \"$CRED_TEMP\" \"$EXPIRE_TEMP\"" EXIT
 # Create or use cached temporary session
 #
 
-CRED_FILE="$CACHE_DIR/${SRC_PROFILE}_session_credentials.json"
-EXPIRE_FILE="$CACHE_DIR/${SRC_PROFILE}_session_expire"
+MFA_CRED_PREFIX="$CACHE_DIR/${SRC_PROFILE}.${MFA_SERIAL//[:\/]/_}.session"
+MFA_CRED_FILE="${MFA_CRED_PREFIX}_credentials.json"
+MFA_EXPIRE_FILE="${MFA_CRED_PREFIX}_expire"
 
 # If session credentials expired or non-existant, prompt for MFA code (if
 # required) and get a session token, and cache the session credentials.
-if [[ ! -s "$CRED_FILE" || "$(date +%s)" -ge "$(cat "$EXPIRE_FILE" 2>/dev/null)" ]]; then
+if [[ ! -s "$MFA_CRED_FILE" || "$(date +%s)" -ge "$(cat "$MFA_EXPIRE_FILE" 2>/dev/null)" ]]; then
+    echo "[$(basename "$0")] Getting session token for profile '$PROFILE'${PROFILE_SOURCE_CONFIG:+ from $PROFILE_SOURCE_CONFIG}" >&2
     if [[ -z "$ROLE_ARN" && -z "$MFA_SERIAL" ]]; then
-        echo "$(basename "$0"): WARNING: No role_arn or mfa_serial found for $PROFILE in $CONFIG_FILE" >&2
+        echo "[$(basename "$0")] WARNING: No role_arn or mfa_serial found for profile $PROFILE" >&2
     fi
 
     # Prompt for MFA code if 'mfa_serial' set in config file
-    if [[ -n "$MFA_SERIAL" ]]; then
-        echo -n "$(basename "$0"): Enter MFA code for $MFA_SERIAL: " >&2
-        read -r MFA_CODE </dev/tty
-    fi
+    [[ -n "$MFA_SERIAL" ]] && \
+        read -p "[$(basename "$0")] Enter MFA code for $MFA_SERIAL: " -r MFA_CODE </dev/tty
 
-    echo "$(basename "$0"): Getting session token${MFA_SERIAL:+ for $MFA_SERIAL}" >&2
 
     # Record the refresh time in the temporary session expire file
     echo "$(( $(date +%s) + MFA_DURATION * MFA_REFRESH / 100 ))" >"$EXPIRE_TEMP"
@@ -287,16 +429,13 @@ if [[ ! -s "$CRED_FILE" || "$(date +%s)" -ge "$(cat "$EXPIRE_FILE" 2>/dev/null)"
     aws --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} >"$CRED_TEMP"
 
     # Move the temporary files to their cached locations
-    mv "$CRED_TEMP" "$CRED_FILE"
-    mv "$EXPIRE_TEMP" "$EXPIRE_FILE"
+    mv "$CRED_TEMP" "$MFA_CRED_FILE"
+    mv "$EXPIRE_TEMP" "$MFA_EXPIRE_FILE"
 fi
 
 # Set the AWS_* credentials environment variables from values in the cached or
 # just-created session credentials file
-AWS_ACCESS_KEY_ID="$(grep AccessKeyId "$CRED_FILE"|sed 's/.*: "\(.*\)".*/\1/')"
-AWS_SECRET_ACCESS_KEY="$(grep SecretAccessKey "$CRED_FILE"|sed 's/.*: "\(.*\)".*/\1/')"
-AWS_SESSION_TOKEN="$(grep SessionToken "$CRED_FILE"|sed 's/.*: "\(.*\)".*/\1/')"
-AWS_SECURITY_TOKEN="$AWS_SESSION_TOKEN"
+load_cred_vars "$MFA_CRED_FILE"
 
 #
 # Assume the role or used cached credentials, if the 'role_arn' is set in the
@@ -304,13 +443,14 @@ AWS_SECURITY_TOKEN="$AWS_SESSION_TOKEN"
 #
 
 if [[ -n "$ROLE_ARN" ]]; then
-    CRED_FILE="$CACHE_DIR/${PROFILE}_role_credentials.json"
-    EXPIRE_FILE="$CACHE_DIR/${PROFILE}_role_expire"
+    ROLE_CRED_PREFIX="$CACHE_DIR/${PROFILE}.${ROLE_ARN//[:\/]/_}.role"
+    ROLE_CRED_FILE="${ROLE_CRED_PREFIX}_credentials.json"
+    ROLE_EXPIRE_FILE="${ROLE_CRED_PREFIX}_expire"
 
     # If role credentials expired or non-existant, assume the role and cache the
     # credentials
-    if [[ ! -s "$CRED_FILE" || "$(date +%s)" -ge "$(cat "$EXPIRE_FILE" 2>/dev/null)" ]]; then
-        echo "$(basename "$0"): Assuming role $ROLE_ARN" >&2
+    if [[ ! -s "$ROLE_CRED_FILE" || "$(date +%s)" -ge "$(cat "$ROLE_EXPIRE_FILE" 2>/dev/null)" ]]; then
+        echo "[$(basename "$0")] Assuming role $ROLE_ARN${ROLE_ARN_SOURCE_CONFIG:+ from $ROLE_ARN_SOURCE_CONFIG}" >&2
 
         # Record the refresh time in the assume-role expire temporary file
         echo "$(( $(date +%s) + ROLE_DURATION * ROLE_REFRESH / 100 ))" >"$EXPIRE_TEMP"
@@ -319,16 +459,13 @@ if [[ -n "$ROLE_ARN" ]]; then
         aws sts assume-role --duration-seconds="$ROLE_DURATION" --role-arn="$ROLE_ARN" --role-session-name="$(date +%Y%m%d-%H%M%S)" ${EXTERNAL_ID:+"--external-id=$EXTERNAL_ID"} >"$CRED_TEMP"
 
         # Move the temporary files to their cached locations
-        mv "$CRED_TEMP" "$CRED_FILE"
-        mv "$EXPIRE_TEMP" "$EXPIRE_FILE"
+        mv "$CRED_TEMP" "$ROLE_CRED_FILE"
+        mv "$EXPIRE_TEMP" "$ROLE_EXPIRE_FILE"
     fi
 
     # Set the AWS_* credentials environment variables from values in the cached or
     # just-created role credentials file
-    AWS_ACCESS_KEY_ID="$(grep AccessKeyId "$CRED_FILE"|sed 's/.*: "\(.*\)".*/\1/')"
-    AWS_SECRET_ACCESS_KEY="$(grep SecretAccessKey "$CRED_FILE"|sed 's/.*: "\(.*\)".*/\1/')"
-    AWS_SESSION_TOKEN="$(grep SessionToken "$CRED_FILE"|sed 's/.*: "\(.*\)".*/\1/')"
-    AWS_SECURITY_TOKEN="$AWS_SESSION_TOKEN"
+    load_cred_vars "$ROLE_CRED_FILE"
 fi
 
 #
