@@ -12,7 +12,7 @@ This aims to be the "ultimate" AWS temporary session wrapper.  Highlights:
 
 To install the latest version, download from
 https://raw.githubusercontent.com/fpco/devops-helpers/master/aws/aws-env.sh and
-put it somewhere on your PATH, preferably named `aws-env`
+put it somewhere on your PATH with execute bits, preferably named `aws-env`.
 
 Usage
 -----
@@ -101,7 +101,7 @@ details.
 
 Some extensions are supported that the AWS CLI does not support:
 
-- Any profile, even those without a `role_arn` may specify an `mfa_serial`.
+- Any profile, even those without a `role_arn`, may specify an `mfa_serial`.
   That means that if you don't use roles, aws-env can still prompt you for an
   MFA code and set temporary credentials (unlike the AWS CLI). For example (in
   `~/.aws/config`)
@@ -127,10 +127,10 @@ Here's an example:
 
     profile=signin
     role_arn=arn:aws:iam::123456789000:role/admin
-    mfa_duration=43200
-    role_duration=1800
-    mfa_refresh=50
-    role_refresh=10
+    mfa_duration_seconds=43200
+    role_duration_seconds=1800
+    mfa_refresh_factor=50
+    role_refresh_factor=10
 
 The values correspond to the command-line options with the same names, so see
 the [Options](#options) section for details. Command-line arguments override any

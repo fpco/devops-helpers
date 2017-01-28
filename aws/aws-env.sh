@@ -106,7 +106,7 @@ details.
 
 Some extensions are supported that the AWS CLI does not support:
 
-- Any profile, even those without a \`role_arn\` may specify an \`mfa_serial\`.
+- Any profile, even those without a \`role_arn\`, may specify an \`mfa_serial\`.
   That means that if you don't use roles, aws-env can still prompt you for an
   MFA code and set temporary credentials (unlike the AWS CLI). For example (in
   \`~/.aws/config\`)
@@ -132,10 +132,10 @@ Here's an example:
 
     profile=signin
     role_arn=arn:aws:iam::123456789000:role/admin
-    mfa_duration=43200
-    role_duration=1800
-    mfa_refresh=50
-    role_refresh=10
+    mfa_duration_seconds=43200
+    role_duration_seconds=1800
+    mfa_refresh_factor=50
+    role_refresh_factor=10
 
 The values correspond to the command-line options with the same names, so see
 the [Options](#options) section for details. Command-line arguments override any
@@ -213,13 +213,13 @@ load_env_config() {
             [[ -n "$ROLE_ARN" ]] && ROLE_ARN_SOURCE_CONFIG="$1"
         fi
         [[ -z "$MFA_DURATION" ]] && \
-            MFA_DURATION="$(grep '^mfa_duration' "$1"|cut -d= -f2)"
+            MFA_DURATION="$(grep '^mfa_duration_seconds' "$1"|cut -d= -f2)"
         [[ -z "$ROLE_DURATION" ]] && \
-            ROLE_DURATION="$(grep '^role_duration' "$1"|cut -d= -f2)"
+            ROLE_DURATION="$(grep '^role_duration_seconds' "$1"|cut -d= -f2)"
         [[ -z "$MFA_REFRESH" ]] && \
-            MFA_REFRESH="$(grep '^mfa_refresh' "$1"|cut -d= -f2)"
+            MFA_REFRESH="$(grep '^mfa_refresh_factor' "$1"|cut -d= -f2)"
         [[ -z "$ROLE_REFRESH" ]] && \
-            ROLE_REFRESH="$(grep '^role_refresh' "$1"|cut -d= -f2)"
+            ROLE_REFRESH="$(grep '^role_refresh_factor' "$1"|cut -d= -f2)"
     fi
 }
 
@@ -382,7 +382,7 @@ fi
     REGION="$(sed -ne '/^\['"$SRC_PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^region'|cut -d= -f2)"
 
 #
-# Ensure existing variables don't interfere with operation
+# Ensure existing variables don't interfere with operation, and set region
 #
 
 unset AWS_ACCESS_KEY_ID
