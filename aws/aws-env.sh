@@ -165,13 +165,19 @@ The following environment variables are read by aws-env:
 \`AWS_ENV_CACHE_DIR\`: Location of cached credentials. Defaults to
 \`~/.aws-env/\`
 
-The following environment variables are **set** by aws-env:
+The following standard AWS environment variables are **set** by aws-env:
 
 - \`AWS_ACCESS_KEY_ID\`
 - \`AWS_SECRET_ACCESS_KEY\`
 - \`AWS_SESSION_TOKEN\`
 - \`AWS_SECURITY_TOKEN\`
 - \`AWS_DEFAULT_REGION\`
+
+In addition, \`AWS_ENV_CURRENT_PROFILE\` is set to the name of the current
+profile. This can be handy for including in your shell prompt. For example, add
+this to your \`.bashrc\`:
+
+    PS1='\$(echo \${AWS_ENV_CURRENT_PROFILE:+"[\$AWS_ENV_CURRENT_PROFILE] "})'"\$PS1"
 
 File locations
 --------------
@@ -469,6 +475,13 @@ if [[ -n "$ROLE_ARN" ]]; then
 fi
 
 #
+# Set extra environment variables
+#
+
+AWS_ENV_CURRENT_PROFILE="$PROFILE"
+export AWS_ENV_CURRENT_PROFILE
+
+#
 # Perform the desired action with the temporary session environment.
 #
 
@@ -481,4 +494,5 @@ else
     echo "export AWS_SECRET_ACCESS_KEY='$AWS_SECRET_ACCESS_KEY';"
     echo "export AWS_SESSION_TOKEN='$AWS_SESSION_TOKEN';"
     echo "export AWS_SECURITY_TOKEN='$AWS_SECURITY_TOKEN';"
+    echo "export AWS_ENV_CURRENT_PROFILE='$AWS_ENV_CURRENT_PROFILE'"
 fi
