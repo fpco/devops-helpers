@@ -18,6 +18,10 @@ This aims to be the "ultimate" AWS temporary session wrapper.  Highlights:
 To install the latest version, download from
 https://raw.githubusercontent.com/fpco/devops-helpers/master/aws/aws-env.sh and
 put it somewhere on your PATH with execute bits, preferably named \`aws-env\`.
+For example:
+
+    wget -O ~/bin/aws-env https://raw.githubusercontent.com/fpco/devops-helpers/master/aws/aws-env.sh
+    chmod a+x ~/bin/aws-env
 
 Usage
 -----
@@ -130,26 +134,32 @@ in order, with values in that come earlier overriding those that come later.
 
 Here's an example:
 
-    profile=signin
+    profile=admin
+    source_profile=signin
     role_arn=arn:aws:iam::123456789000:role/admin
     mfa_duration_seconds=43200
     role_duration_seconds=1800
     mfa_refresh_factor=50
     role_refresh_factor=10
 
-The values correspond to the command-line options with the same names, so see
-the [Options](#options) section for details. Command-line arguments override any
-configuration in the aws-env config.
+The values correspond to the command-line options or AWS CLI configuration
+options with the same names, so see the [Options](#options) section for details.
+Command-line arguments override any configuration in the aws-env config.
 
 A typical way to use this is to put an \`aws-env.config\` in the root of your
-project that specifies the role to assume when working on that project and name
-of a profile that has the credentials and MFA device, and commit that to the
-repository. As long as all users of the project have a consistent name for the
-credentials profile, they can just prefix any AWS-using command with \`aws-env\`
-and be sure it's run in the correct context. Users can add or override
-configuration locally using \`.aws-env.config\` (note: has a dot at the
-beginning).
+project that specifies the \`role_arn\` to assume when working on that project
+the \`source_profile\` that has the credentials and MFA device, and commit that
+to the repository. As long as all users of the project have a consistent name
+for the credentials \`source_profile\`, they can just prefix any AWS-using
+command with \`aws-env\` and be sure it's run in the correct context. Users can
+add or override configuration locally using \`.aws-env.config\` (note: has a dot
+at the beginning). It can also be nice to specify a \`profile\` which does not
+actually have to exist, but means that \`AWS_ENV_CURRENT_PROFILE\` will be set
+to that value for inclusion in the shell prompt. Example:
 
+    profile=admin
+    source_profile=signin
+    role_arn=arn:aws:iam::123456789000:role/admin
 
 Environment variables
 ---------------------
@@ -177,7 +187,7 @@ In addition, \`AWS_ENV_CURRENT_PROFILE\` is set to the name of the current
 profile. This can be handy for including in your shell prompt. For example, add
 this to your \`.bashrc\`:
 
-    PS1='\$(echo \${AWS_ENV_CURRENT_PROFILE:+"[\$AWS_ENV_CURRENT_PROFILE] "})'"\$PS1"
+    PS1='\${AWS_ENV_CURRENT_PROFILE:+[\$AWS_ENV_CURRENT_PROFILE]}'"\$PS1"
 
 File locations
 --------------
@@ -214,6 +224,7 @@ load_env_config() {
             PROFILE="$(grep '^profile' "$1"|cut -d= -f2)"
             [[ -n "$PROFILE" ]] && PROFILE_SOURCE_CONFIG="$1"
         fi
+        [[ -z "$SRC_PROFILE" ]] && SRC_PROFILE="$(grep '^source_profile' "$1"|cut -d= -f2)"
         if [[ -z "$ROLE_ARN" ]]; then
             ROLE_ARN="$(grep '^role_arn' "$1"|cut -d= -f2)"
             [[ -n "$ROLE_ARN" ]] && ROLE_ARN_SOURCE_CONFIG="$1"
@@ -236,6 +247,7 @@ load_env_config() {
 ROLE_ARN=
 ROLE_ARN_SOURCE_CONFIG=
 PROFILE=
+SRC_PROFILE=
 MFA_DURATION=
 ROLE_DURATION=
 MFA_REFRESH=
@@ -370,7 +382,7 @@ fi
 #
 
 [[ -n "$ROLE_ARN" ]] || ROLE_ARN="$(sed -ne '/^\['"$PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^role_arn'|cut -d= -f2)"
-SRC_PROFILE="$(sed -ne '/\['"$PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^source_profile'|cut -d= -f2)"
+[[ -n "$SRC_PROFILE" ]] || SRC_PROFILE="$(sed -ne '/\['"$PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^source_profile'|cut -d= -f2)"
 MFA_SERIAL="$(sed -ne '/^\['"$PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^mfa_serial'|cut -d= -f2)"
 EXTERNAL_ID="$(sed -ne '/^\['"$PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^external_id'|cut -d= -f2)"
 REGION="$(sed -ne '/^\['"$PROFILE_SECTION"'\]/,/^\[/p' "$AWS_CONFIG_FILE"|grep '^region'|cut -d= -f2)"
