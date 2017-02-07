@@ -2,84 +2,95 @@
 
 This aims to be the "ultimate" AWS temporary session wrapper.  Highlights:
 
-- Supports both MFA and assuming roles
-- Caches credentials so you can share between shell sessions and don't get
-  prompted for MFA codes unnecessarily
-- Can be used either as a wrapper or `eval`'d
-- Uses the same configuration files as the AWS CLI, with some extensions
-- Supports directory context-sensitive configuration in `aws-env.config`
-- Only non-standard dependency is the AWS CLI
+  - Supports both MFA and assuming roles
+  - Caches credentials so you can share between shell sessions and don't get
+    prompted for MFA codes unnecessarily
+  - Can be used either as a wrapper or `eval`ed
+  - Bash prompt integration: add profile to prompt, and optionally
+    update temporary credentials automatically (**EXPERIMENTAL**).
+  - Uses the same configuration files as the AWS CLI, with some extensions
+  - Supports directory context-sensitive configuration in `aws-env.config`
+  - Only non-standard dependency is the AWS CLI
 
-To install the latest version, download from
-https://raw.githubusercontent.com/fpco/devops-helpers/master/aws/aws-env.sh and
-put it somewhere on your PATH with execute bits, preferably named `aws-env`.
+Limitations
+
+  - Only tested with `bash`.
+
+Installation
+------------
+
+### Requirements
+
+You must have the AWS CLI installed. See the [AWS CLI installation
+guide](http://docs.aws.amazon.com/cli/latest/userguide/installing.html).
+
+### Download and install
+
+To install the latest version, download [the
+script](https://raw.githubusercontent.com/fpco/devops-helpers/master/aws/aws-env.sh)
+and put it somewhere on your PATH with execute bits, preferably named `aws-env`.
 For example:
 
-    wget -O ~/bin/aws-env https://raw.githubusercontent.com/fpco/devops-helpers/master/aws/aws-env.sh
-    chmod a+x ~/bin/aws-env
+    wget -O aws-env https://raw.githubusercontent.com/fpco/devops-helpers/master/aws/aws-env.sh
+    chmod a+x aws-env
+    sudo mv aws-env /usr/local/bin/aws-env
 
 Usage
 -----
 
     aws-env \
+        [--auto|-a] \
+        [--profile=NAME|-p NAME] \
         [--help] \
-        [--profile NAME|-p NAME] \
-        [--role-arn ARN|-r ARN] \
-        [--mfa-duration-seconds DURATION] \
-        [--mfa-refresh-factor PERCENT] \
-        [--role-duration-seconds DURATION] \
-        [--role-refresh-factor PERCENT] \
+        [--] \
         [COMMAND [ARGS ...]]
 
-Options
--------
+### Options
+
+`--auto`: **EXPERIMENTAL**. Enables automatic updating of temporary credentials
+    through bash prompt integration when `eval`ed. See **Bash integration**
+    below for more details.
+
+`--profile NAME`: Set the AWS CLI profile to use. If not specified, uses the
+    value of AWS_DEFAULT_PROFILE or `default` if that is not set. Note that this
+    will completely override any role_arn, mfa_serial, region, and
+    source_profile set in the `aws-env.config`.
 
 `--help`: Display this help text and exit.
 
-`--profile NAME`: Set the AWS CLI profile to use. If not specified, uses the
-  value of AWS_DEFAULT_PROFILE or `default` if that is not set.
-
-`--role-arn ARN`: ARN of role to assume.  Overrides the profile's value.
-
-`--mfa-duration-seconds DURATION`: Set how long until the MFA session expires.
-  This defaults to the maximum 129600 (36 hours).
-
-`--role-duration-seconds DURATION`: Set how long until the role session expires.
-  This defaults to the maximum 3600 (1 hour).
-
-`--role-refresh-factor PERCENT`: Percentage of role token duration at which to
-  refresh it. The default is to request a new token after 35% of the old token's
-  duration has passed.
-
-`--mfa-refresh-factor PERCENT`: Percentage of MFA token duration at which to
-  refresh it. The default is to request a new token after 65% of the old token's
-  duration has passed.
-
-Arguments
----------
+### Arguments
 
 When given a COMMAND, executes the command in the context of the temporary
 session. For example:
 
     aws-env -p admin terraform plan
 
-Without a COMMAND, prints `export` commands to stdout suitable for evaluating by
-the shell. For example:
+Without a COMMAND, prints commands that set environment variables to stdout,
+suitable for evaluating by the shell. For example:
 
     eval $(aws-env -p admin)
 
-Requirements
-------------
+Bash integration
+----------------
 
-You must have the AWS CLI installed. See
-http://docs.aws.amazon.com/cli/latest/userguide/installing.html.
+By default, `eval $(aws-env)` will add the current profile name to the bash
+prompt (`$PS1`). The prompt format can be overridden in `.aws-env.config`.
+
+**EXPERIMENTAL**: when given the `--auto` or `-a` option, `eval
+$(aws-env -a)` will also set up a `$PROMPT_COMMAND` that is run before every
+prompt which sets up temporary credentials based on the `aws-env.config` file(s)
+in the current or parent directories (see the **Configuration** section). It
+will automatically refresh expired temporary credentials, prompting you for an
+MFA code if necessary. The end result is similar to implicitly prefixing every
+command you run with `aws-env `.
 
 Configuration
 -------------
 
 aws-env gets configuration from two places:
-- The AWS CLI configuration files, by default `~/.aws/config` and `~/.aws/credentials`.
-- Its own `aws-env.config` and `aws-env.config`
+
+  - The AWS CLI configuration files, by default `~/.aws/config` and `~/.aws/credentials`.
+  - Its own `aws-env.config` and `.aws-env.config`
 
 ### AWS CLI configuration file.
 
@@ -105,53 +116,77 @@ details.
 
 Some extensions are supported that the AWS CLI does not support:
 
-- Any profile, even those without a `role_arn`, may specify an `mfa_serial`.
-  That means that if you don't use roles, aws-env can still prompt you for an
-  MFA code and set temporary credentials (unlike the AWS CLI). For example (in
-  `~/.aws/config`)
+  - Any profile, even those without a `role_arn`, may specify an `mfa_serial`.
+    That means that even if you don't use roles, aws-env can still prompt you
+    for an MFA code and set temporary credentials (unlike the AWS CLI). For
+    example (in `~/.aws/config`)
 
         [profile signin]
         mfa_serial=arn:aws:iam::987654321000:mfa/username
 
-- aws-env will use the `mfa_serial` from the `source_profile`, so you don't
-  need to repeat it in every role profile.
+  - aws-env will use the `mfa_serial` and `region` from the `source_profile`, so
+    you don't need to repeat it in every role profile.
 
 ### aws-env configuration
 
 The optional aws-env configuration files are read from the following locations,
 in order, with values in that come earlier overriding those that come later.
 
-- Current directory's `.aws-env.config`
-- Current directory's `aws-env.config`
-- Recursively in the parent directories' `.aws-env.config` and
-  `aws-env.config`s, until (and not including) /Users/manny or the root.
-- `~/.aws-env.config`
+  - Current directory's `.aws-env.config`
+  - Current directory's `aws-env.config`
+  - Recursively in the parent directories' `.aws-env.config` and
+    `aws-env.config`s, until (and not including) $HOME or the root.
+  - `$HOME/.aws-env.config`
 
-Here's an example:
+Here's an annotated example (all fields are optional, and defaults or values
+from the AWS CLI configuration will be used for any ommitted values):
 
+    # The default AWS region.
+    region=us-west-2
+
+    # Profile name. Note that this profile does not need to exist in the AWS CLI
+    # configuration if a source_profile is set, but it is displayed to the user
+    # and in the prompt.
     profile=admin
+
+    # The AWS CLI profile to use when creating the temporary session.
     source_profile=signin
+
+    # The ARN of the role to assume.
     role_arn=arn:aws:iam::123456789000:role/admin
+
+    # How long until the MFA session expires. This defaults to the maximum
+    # 129600 (36 hours).
     mfa_duration_seconds=43200
+
+    # How long until the role session expires. This defaults to the maximum 3600
+    # (1 hour).
     role_duration_seconds=1800
+
+    # Percentage of MFA token duration at which to refresh it. The default is to
+    # request a new token after 65% of the old token's duration has passed.
     mfa_refresh_factor=50
+
+    # Percentage of role token duration at which to refresh it. The default is
+    # to request a new token after 35% of the old token's duration has passed.
     role_refresh_factor=10
 
-The values correspond to the command-line options or AWS CLI configuration
-options with the same names, so see the [Options](#options) section for details.
-Command-line arguments override any configuration in the aws-env config.
+    # The 'printf' format for the profile in the bash prompt. This can include
+    # terminal escape sequences to change the colour.  Defaults to '[%s]'
+    prompt_format=\[\033[1;31m\](%s)\[\033[0m\]
 
 A typical way to use this is to put an `aws-env.config` in the root of your
-project that specifies the `role_arn` to assume when working on that project
-the `source_profile` that has the credentials and MFA device, and commit that
-to the repository. As long as all users of the project have a consistent name
-for the credentials `source_profile`, they can just prefix any AWS-using
-command with `aws-env` and be sure it's run in the correct context. Users can
-add or override configuration locally using `.aws-env.config` (note: has a dot
-at the beginning). It can also be nice to specify a `profile` which does not
-actually have to exist, but means that `AWS_ENV_CURRENT_PROFILE` will be set
-to that value for inclusion in the shell prompt. Example:
+project that specifies the `role_arn` to assume when working on that project the
+`source_profile` that has the credentials and MFA device, and commit that to the
+repository. As long as all users of the project have a consistent name for the
+credentials `source_profile`, they can just prefix any AWS-using command with
+`aws-env` (or use `--auto` mode) and be sure it's run in the correct context.
+Users can add or override configuration locally using `.aws-env.config` (note:
+has a dot at the beginning). It can also be nice to specify a `profile` which
+does not actually have to exist, but means that will be displayed in the bash
+prompt. Example:
 
+    region=us-west-2
     profile=admin
     source_profile=signin
     role_arn=arn:aws:iam::123456789000:role/admin
@@ -159,7 +194,7 @@ to that value for inclusion in the shell prompt. Example:
 Environment variables
 ---------------------
 
-The following environment variables are read by aws-env:
+### The following environment variables are read by aws-env:
 
 `AWS_DEFAULT_PROFILE`: AWS CLI profile to use. Defaults to `default`.
 `default` is used.
@@ -170,7 +205,7 @@ The following environment variables are read by aws-env:
 `AWS_ENV_CACHE_DIR`: Location of cached credentials. Defaults to
 `~/.aws-env/`
 
-The following standard AWS environment variables are **set** by aws-env:
+### The following standard AWS environment variables are **set** by aws-env:
 
 - `AWS_ACCESS_KEY_ID`
 - `AWS_SECRET_ACCESS_KEY`
@@ -179,10 +214,11 @@ The following standard AWS environment variables are **set** by aws-env:
 - `AWS_DEFAULT_REGION`
 
 In addition, `AWS_ENV_CURRENT_PROFILE` is set to the name of the current
-profile. This can be handy for including in your shell prompt. For example, add
-this to your `.bashrc`:
+profile.
 
-    PS1='${AWS_ENV_CURRENT_PROFILE:+[$AWS_ENV_CURRENT_PROFILE]}'"$PS1"
+When used in `eval` mode, `PS1` is also be prefixed so that the bash prompt
+shows the current profile. When used in `--auto` mode, `PROMPT_COMMAND` is also
+set.
 
 File locations
 --------------
