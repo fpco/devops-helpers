@@ -43,6 +43,8 @@ Usage
 
     aws-env \
         [--profile=NAME|-p NAME] \
+        [--mfa-serial=ARN|-m ARN] \
+        [--role-arn=ARN|-r ARN] \
         [--help] \
         [--] \
         [COMMAND [ARGS ...]]
@@ -53,6 +55,10 @@ Usage
     value of AWS_DEFAULT_PROFILE or `default` if that is not set. Note that this
     will completely override any role_arn, mfa_serial, region, and
     source_profile set in the `aws-env.config`.
+
+`--mfa-serial ARN`: Override or set the MFA device ARN.
+
+`--role-arn ARN`: Override or set the ARN for the role to assume.
 
 `--help`: Display this help text and exit.
 
@@ -74,10 +80,10 @@ Bash integration
 By default, `eval $(aws-env)` will add the current profile name to the bash
 prompt (`$PS1`). The prompt format can be overridden in `.aws-env.config`.
 
-Configuration
--------------
+Configuration Files
+-------------------
 
-aws-env gets configuration from two places:
+aws-env gets configuration from two places (in addition to environment variables):
 
   - The AWS CLI configuration files, by default `~/.aws/config` and `~/.aws/credentials`.
   - Its own `aws-env.config` and `.aws-env.config`
@@ -116,6 +122,9 @@ Some extensions are supported that the AWS CLI does not support:
 
   - aws-env will use the `mfa_serial` and `region` from the `source_profile`, so
     you don't need to repeat it in every role profile.
+
+Note: the AWS CLI configuration file is ignored if the `AWS_ACCESS_KEY_ID`
+environment variable is set.
 
 ### aws-env configuration
 
@@ -194,6 +203,16 @@ Environment variables
 `AWS_ENV_CACHE_DIR`: Location of cached credentials. Defaults to
 `~/.aws-env/`
 
+`AWS_ENV_DEFAULT_MFA_SERIAL`: Default MFA device ARN to use if not
+set in configuration file or on command-line.
+
+`AWS_ENV_DEFAULT_ROLE_ARN`: Default ARN of role to assume if not
+set in configuration file or on command-line.
+
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`: Default AWS credentials to use
+in order to generate temporary credentials. Note that if these are specified,
+the AWS configuration files are ignored.
+
 ### The following standard AWS environment variables are **set** by aws-env:
 
 - `AWS_ACCESS_KEY_ID`
@@ -205,7 +224,7 @@ Environment variables
 In addition, `AWS_ENV_CURRENT_PROFILE` is set to the name of the current
 profile.
 
-When used in `eval` mode, `PS1` is also be prefixed so that the bash prompt
+When used in `eval` mode, `PS1` is also prefixed so that the bash prompt
 shows the current profile.
 
 File locations

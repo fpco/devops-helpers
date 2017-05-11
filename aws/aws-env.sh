@@ -45,6 +45,8 @@ Usage
 
     aws-env \
         [--profile=NAME|-p NAME] \
+        [--mfa-serial=ARN|-m ARN] \
+        [--role-arn=ARN|-r ARN] \
         [--help] \
         [--] \
         [COMMAND [ARGS ...]]
@@ -55,6 +57,10 @@ Usage
     value of AWS_DEFAULT_PROFILE or `default` if that is not set. Note that this
     will completely override any role_arn, mfa_serial, region, and
     source_profile set in the `aws-env.config`.
+
+`--mfa-serial ARN`: Override or set the MFA device ARN.
+
+`--role-arn ARN`: Override or set the ARN for the role to assume.
 
 `--help`: Display this help text and exit.
 
@@ -76,10 +82,10 @@ Bash integration
 By default, `eval $(aws-env)` will add the current profile name to the bash
 prompt (`$PS1`). The prompt format can be overridden in `.aws-env.config`.
 
-Configuration
--------------
+Configuration Files
+-------------------
 
-aws-env gets configuration from two places:
+aws-env gets configuration from two places (in addition to environment variables):
 
   - The AWS CLI configuration files, by default `~/.aws/config` and `~/.aws/credentials`.
   - Its own `aws-env.config` and `.aws-env.config`
@@ -118,6 +124,9 @@ Some extensions are supported that the AWS CLI does not support:
 
   - aws-env will use the `mfa_serial` and `region` from the `source_profile`, so
     you don't need to repeat it in every role profile.
+
+Note: the AWS CLI configuration file is ignored if the `AWS_ACCESS_KEY_ID`
+environment variable is set.
 
 ### aws-env configuration
 
@@ -196,6 +205,16 @@ Environment variables
 `AWS_ENV_CACHE_DIR`: Location of cached credentials. Defaults to
 `~/.aws-env/`
 
+`AWS_ENV_DEFAULT_MFA_SERIAL`: Default MFA device ARN to use if not
+set in configuration file or on command-line.
+
+`AWS_ENV_DEFAULT_ROLE_ARN`: Default ARN of role to assume if not
+set in configuration file or on command-line.
+
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`: Default AWS credentials to use
+in order to generate temporary credentials. Note that if these are specified,
+the AWS configuration files are ignored.
+
 ### The following standard AWS environment variables are **set** by aws-env:
 
 - `AWS_ACCESS_KEY_ID`
@@ -207,7 +226,7 @@ Environment variables
 In addition, `AWS_ENV_CURRENT_PROFILE` is set to the name of the current
 profile.
 
-When used in `eval` mode, `PS1` is also be prefixed so that the bash prompt
+When used in `eval` mode, `PS1` is also prefixed so that the bash prompt
 shows the current profile.
 
 File locations
@@ -321,6 +340,7 @@ trap cleanup EXIT
 FIRST_ENV_CONFIG_FILE=
 ROLE_ARN=
 ROLE_ARN_SOURCE_CONFIG=
+MFA_SERIAL=
 PROFILE=
 PROFILE_SOURCE_CONFIG=
 SRC_PROFILE=
@@ -351,12 +371,16 @@ CACHE_DIR="${AWS_ENV_CACHE_DIR:-$HOME/.aws-env}"
 [[ -n "$PROFILE" ]] || PROFILE="${AWS_DEFAULT_PROFILE:-default}"
 AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
 [[ -n "$PROMPT_FORMAT" ]] || PROMPT_FORMAT='[%s]'
+[[ -n "$MFA_SERIAL" ]] || MFA_SERIAL="${AWS_ENV_DEFAULT_MFA_SERIAL:-}"
+[[ -n "$ROLE_ARN" ]] || ROLE_ARN="${AWS_ENV_DEFAULT_ROLE_ARN:-}"
 
 #
 # Parse command-line
 #
 
 PROFILE_ARG=
+MFA_SERIAL_ARG=
+ROLE_ARN_ARG=
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --profile=*)
@@ -369,6 +393,30 @@ while [[ $# -gt 0 ]]; do
             ;;
         -p)
             PROFILE_ARG="$2"
+            shift 2
+            ;;
+        --mfa-serial=*)
+            MFA_SERIAL_ARG="${1#--mfa-serial=}"
+            shift
+            ;;
+        --mfa-serial)
+            MFA_SERIAL_ARG="$2"
+            shift 2
+            ;;
+        -m)
+            MFA_SERIAL_ARG="$2"
+            shift 2
+            ;;
+        --role-arn=*)
+            ROLE_ARN_ARG="${1#--role-arn=}"
+            shift
+            ;;
+        --role-arn)
+            ROLE_ARN_ARG="$2"
+            shift 2
+            ;;
+        -r)
+            ROLE_ARN_ARG="$2"
             shift 2
             ;;
         --help|-h)
@@ -400,57 +448,86 @@ if [[ -n "$PROFILE_ARG" ]]; then
     REGION=
 fi
 
-#
-# Friendly error if AWS config file doesn't exist
-#
-
-if [[ ! -s $AWS_CONFIG_FILE ]]; then
-    echo "[$(basename "$0")] Cannot find AWS CLI config file: $AWS_CONFIG_FILE" >&2
-    exit 1
-fi
+[[ -z "$MFA_SERIAL_ARG" ]] || MFA_SERIAL="$MFA_SERIAL_ARG"
+[[ -z "$ROLE_ARN_ARG" ]] || ROLE_ARN="$ROLE_ARN_ARG"
 
 #
-# Ensure existing variables don't interfere with operation
+# Reset credentials environment variables to their original values.
 #
 
-unset AWS_ACCESS_KEY_ID
-unset AWS_SECRET_ACCESS_KEY
-unset AWS_SESSION_TOKEN
-unset AWS_SECURITY_TOKEN
-unset AWS_ENV_EXPIRE
-export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN AWS_DEFAULT_REGION AWS_ENV_EXPIRE
+case "${AWS_ENV_ORIG_ACCESS_KEY_ID:-}" in
+    -) unset AWS_ACCESS_KEY_ID ;;
+    "") ;;
+    *) AWS_ACCESS_KEY_ID="${AWS_ENV_ORIG_ACCESS_KEY_ID}" ;;
+esac
+AWS_ENV_ORIG_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:--}"
+case "${AWS_ENV_ORIG_SECRET_ACCESS_KEY:-}" in
+    -) unset AWS_SECRET_ACCESS_KEY ;;
+    "") ;;
+    *) AWS_SECRET_ACCESS_KEY="${AWS_ENV_ORIG_SECRET_ACCESS_KEY}" ;;
+esac
+AWS_ENV_ORIG_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:--}"
+case "${AWS_ENV_ORIG_SESSION_TOKEN:-}" in
+    -) unset AWS_SESSION_TOKEN ;;
+    "") ;;
+    *) AWS_SESSION_TOKEN="${AWS_ENV_ORIG_SESSION_TOKEN}" ;;
+esac
+AWS_ENV_ORIG_SESSION_TOKEN="${AWS_SESSION_TOKEN:--}"
+case "${AWS_ENV_ORIG_SECURITY_TOKEN:-}" in
+    -) unset AWS_SECURITY_TOKEN ;;
+    "") ;;
+    *) AWS_SECURITY_TOKEN="${AWS_ENV_ORIG_SECURITY_TOKEN}" ;;
+esac
+AWS_ENV_ORIG_SECURITY_TOKEN="${AWS_SECURITY_TOKEN:--}"
+export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
+export AWS_ENV_ORIG_ACCESS_KEY_ID AWS_ENV_ORIG_SECRET_ACCESS_KEY AWS_ENV_ORIG_SESSION_TOKEN AWS_ENV_ORIG_SECURITY_TOKEN
+export AWS_DEFAULT_REGION
 
-#
-# Read AWS config file
-#
-
-if [[ "$PROFILE" == "default" ]]; then
-    PROFILE_SECTION="default"
+if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -z "$PROFILE_ARG" ]]; then
+    PROFILE="${AWS_ACCESS_KEY_ID}"
+    SRC_PROFILE="${AWS_ACCESS_KEY_ID}"
 else
-    PROFILE_SECTION="profile $PROFILE"
-fi
+    #
+    # Friendly error if AWS config file doesn't exist
+    #
 
-[[ -n "$ROLE_ARN" ]] || ROLE_ARN="$(configfield "$AWS_CONFIG_FILE" role_arn "$PROFILE_SECTION")"
-[[ -n "$SRC_PROFILE" ]] || SRC_PROFILE="$(configfield "$AWS_CONFIG_FILE" source_profile "$PROFILE_SECTION")"
-[[ -n "$REGION" ]] || REGION="$(configfield "$AWS_CONFIG_FILE" region "$PROFILE_SECTION")"
-MFA_SERIAL="$(configfield "$AWS_CONFIG_FILE" mfa_serial "$PROFILE_SECTION")"
-EXTERNAL_ID="$(configfield "$AWS_CONFIG_FILE" external_id "$PROFILE_SECTION")"
-[[ -n "$SRC_PROFILE" ]] || SRC_PROFILE="$PROFILE"
+    if [[ ! -s $AWS_CONFIG_FILE ]]; then
+        echo "[$(basename "$0")] Cannot find AWS CLI config file: $AWS_CONFIG_FILE" >&2
+        exit 1
+    fi
 
-if [[ "$SRC_PROFILE" == "default" ]]; then
-    SRC_PROFILE_SECTION="default"
-else
-    SRC_PROFILE_SECTION="profile $SRC_PROFILE"
-fi
+    #
+    # Read AWS config file
+    #
 
-[[ -n "$MFA_SERIAL" ]] || \
-    MFA_SERIAL="$(configfield "$AWS_CONFIG_FILE" mfa_serial "$SRC_PROFILE_SECTION")"
-[[ -n "$REGION" ]] || \
-    REGION="$(configfield "$AWS_CONFIG_FILE" region "$SRC_PROFILE_SECTION")"
+    if [[ "$PROFILE" == "default" ]]; then
+        PROFILE_SECTION="default"
+    else
+        PROFILE_SECTION="profile $PROFILE"
+    fi
 
-if [[ "$(grep '^\['"$SRC_PROFILE_SECTION"'\]' "$AWS_CONFIG_FILE")" == "" && "$(grep '^\['"$SRC_PROFILE"'\]' "$HOME/.aws/credentials")" == "" ]]; then
-    echo "[$(basename "$0")] Cannot find '$SRC_PROFILE' profile in AWS CLI configuration" >&2
-    exit 1
+    [[ -n "$ROLE_ARN" ]] || ROLE_ARN="$(configfield "$AWS_CONFIG_FILE" role_arn "$PROFILE_SECTION")"
+    [[ -n "$SRC_PROFILE" ]] || SRC_PROFILE="$(configfield "$AWS_CONFIG_FILE" source_profile "$PROFILE_SECTION")"
+    [[ -n "$REGION" ]] || REGION="$(configfield "$AWS_CONFIG_FILE" region "$PROFILE_SECTION")"
+    MFA_SERIAL="$(configfield "$AWS_CONFIG_FILE" mfa_serial "$PROFILE_SECTION")"
+    EXTERNAL_ID="$(configfield "$AWS_CONFIG_FILE" external_id "$PROFILE_SECTION")"
+    [[ -n "$SRC_PROFILE" ]] || SRC_PROFILE="$PROFILE"
+
+    if [[ "$SRC_PROFILE" == "default" ]]; then
+        SRC_PROFILE_SECTION="default"
+    else
+        SRC_PROFILE_SECTION="profile $SRC_PROFILE"
+    fi
+
+    [[ -n "$MFA_SERIAL" ]] || \
+        MFA_SERIAL="$(configfield "$AWS_CONFIG_FILE" mfa_serial "$SRC_PROFILE_SECTION")"
+    [[ -n "$REGION" ]] || \
+        REGION="$(configfield "$AWS_CONFIG_FILE" region "$SRC_PROFILE_SECTION")"
+
+    if [[ "$(grep '^\['"$SRC_PROFILE_SECTION"'\]' "$AWS_CONFIG_FILE")" == "" && "$(grep '^\['"$SRC_PROFILE"'\]' "$HOME/.aws/credentials")" == "" ]]; then
+        echo "[$(basename "$0")] Cannot find '$SRC_PROFILE' profile in AWS CLI configuration" >&2
+        exit 1
+    fi
 fi
 
 #
@@ -489,7 +566,11 @@ if [[ ! -s "$MFA_CRED_FILE" || "$CURDATE" -ge "$AWS_ENV_EXPIRE" ]]; then
     # Get the session token and save credentials in temporary credentials file
     touch "$CRED_TEMP"
     chmod 0600 "$CRED_TEMP"
-    aws --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
+    if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
+        aws sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
+    else
+        aws --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
+    fi
 
     # Move the temporary files to their cached locations
     mv "$CRED_TEMP" "$MFA_CRED_FILE"
@@ -562,9 +643,12 @@ else
     echo "export AWS_SECRET_ACCESS_KEY='$AWS_SECRET_ACCESS_KEY';"
     echo "export AWS_SESSION_TOKEN='$AWS_SESSION_TOKEN';"
     echo "export AWS_SECURITY_TOKEN='$AWS_SECURITY_TOKEN';"
+    echo "export AWS_ENV_ORIG_ACCESS_KEY_ID='$AWS_ENV_ORIG_ACCESS_KEY_ID';"
+    echo "export AWS_ENV_ORIG_SECRET_ACCESS_KEY='$AWS_ENV_ORIG_SECRET_ACCESS_KEY';"
+    echo "export AWS_ENV_ORIG_SESSION_TOKEN='$AWS_ENV_ORIG_SESSION_TOKEN';"
+    echo "export AWS_ENV_ORIG_SECURITY_TOKEN='$AWS_ENV_ORIG_SECURITY_TOKEN';"
     [[ -z "${AWS_DEFAULT_REGION:-}" ]] || echo "export AWS_DEFAULT_REGION='$AWS_DEFAULT_REGION';"
     echo "export AWS_ENV_CURRENT_PROFILE='$AWS_ENV_CURRENT_PROFILE';"
-    echo "export AWS_ENV_EXPIRE='$AWS_ENV_EXPIRE';"
     setup_shell_prompt
     exit 0
 fi
