@@ -489,7 +489,7 @@ if [[ ! -s "$MFA_CRED_FILE" || "$CURDATE" -ge "$AWS_ENV_EXPIRE" ]]; then
     # Get the session token and save credentials in temporary credentials file
     touch "$CRED_TEMP"
     chmod 0600 "$CRED_TEMP"
-    aws --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} >"$CRED_TEMP"
+    aws --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
 
     # Move the temporary files to their cached locations
     mv "$CRED_TEMP" "$MFA_CRED_FILE"
@@ -524,7 +524,7 @@ if [[ -n "$ROLE_ARN" ]]; then
         # Assume the role and save role credentials in temporary credential file
         touch "$CRED_TEMP"
         chmod 0600 "$CRED_TEMP"
-        aws sts assume-role --duration-seconds="$ROLE_DURATION" --role-arn="$ROLE_ARN" --role-session-name="$(date +%Y%m%d-%H%M%S)" ${EXTERNAL_ID:+"--external-id=$EXTERNAL_ID"} >"$CRED_TEMP"
+        aws sts assume-role --duration-seconds="$ROLE_DURATION" --role-arn="$ROLE_ARN" --role-session-name="$(date +%Y%m%d-%H%M%S)" ${EXTERNAL_ID:+"--external-id=$EXTERNAL_ID"} --output json >"$CRED_TEMP"
 
         # Move the temporary files to their cached locations
         mv "$CRED_TEMP" "$ROLE_CRED_FILE"
