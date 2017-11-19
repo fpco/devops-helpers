@@ -54,7 +54,7 @@ Usage
 ### Options
 
 `--profile NAME`: Set the AWS CLI profile to use. If not specified, uses the
-    value of AWS_DEFAULT_PROFILE or `default` if that is not set. Note that this
+    value of AWS_PROFILE or AWS_DEFAULT_PROFILE, or `default` if that is not set. Note that this
     will completely override any role_arn, mfa_serial, region, and
     source_profile set in the `aws-env.config`.
 
@@ -196,8 +196,8 @@ Environment variables
 
 ### The following environment variables are read by aws-env:
 
-`AWS_DEFAULT_PROFILE`: AWS CLI profile to use. Defaults to `default`.
-`default` is used.
+`AWS_PROFILE` and `AWS_DEFAULT_PROFILE`: AWS CLI profile to use. Defaults to
+`default`.
 
 `AWS_CONFIG_FILE`: Location of the AWS CLI config file. Defaults to
 `~/.aws/config`.
@@ -369,6 +369,7 @@ load_env_config "$HOME/.aws-env.config"
 [[ -n "$ROLE_REFRESH" ]] || ROLE_REFRESH=35
 CACHE_DIR="${AWS_ENV_CACHE_DIR:-$HOME/.aws-env}"
 [[ -n "$PROFILE" ]] || PROFILE="${AWS_DEFAULT_PROFILE:-default}"
+PROFILE="${AWS_PROFILE:-$PROFILE}"
 AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
 [[ -n "$PROMPT_FORMAT" ]] || PROMPT_FORMAT='[%s]'
 [[ -n "$MFA_SERIAL" ]] || MFA_SERIAL="${AWS_ENV_DEFAULT_MFA_SERIAL:-}"
