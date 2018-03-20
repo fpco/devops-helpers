@@ -76,6 +76,12 @@ suitable for evaluating by the shell. For example:
 
     eval $(aws-env -p admin)
 
+**Warning**: `eval` mode credentials will expire, and then it is up to you to
+refresh them.  **This can be dangerous** because they might expire in the
+middle of an operation, leading to potential data loss (like an incorrect
+Terraform remote state file).  As such, we recommend avoiding this approach
+and prefixing all commands with `aws-env` instead.
+
 Bash integration
 ----------------
 
