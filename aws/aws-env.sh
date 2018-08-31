@@ -554,6 +554,14 @@ MFA_CRED_FILE="${MFA_CRED_PREFIX}_credentials.json"
 MFA_EXPIRE_FILE="${MFA_CRED_PREFIX}_expire"
 AWS_ENV_EXPIRE="$(cat "$MFA_EXPIRE_FILE" 2>/dev/null || true)"
 
+#
+# Extra STS parameters to account for GovCloud region(s)
+#
+STS_EXTRA_PARAMS=
+if [[ "${REGION}" == 'us-gov'* ]]; then
+    STS_EXTRA_PARAMS="--endpoint-url=https://sts.${REGION}.amazonaws.com/"
+fi
+
 # If session credentials expired or non-existant, prompt for MFA code (if
 # required) and get a session token, and cache the session credentials.
 if [[ ! -s "$MFA_CRED_FILE" || "$CURDATE" -ge "$AWS_ENV_EXPIRE" ]]; then
@@ -574,9 +582,9 @@ if [[ ! -s "$MFA_CRED_FILE" || "$CURDATE" -ge "$AWS_ENV_EXPIRE" ]]; then
     touch "$CRED_TEMP"
     chmod 0600 "$CRED_TEMP"
     if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
-        aws sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
+        aws ${STS_EXTRA_PARAMS} sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
     else
-        aws --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
+        aws ${STS_EXTRA_PARAMS} --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
     fi
 
     # Move the temporary files to their cached locations
@@ -612,7 +620,7 @@ if [[ -n "$ROLE_ARN" ]]; then
         # Assume the role and save role credentials in temporary credential file
         touch "$CRED_TEMP"
         chmod 0600 "$CRED_TEMP"
-        aws sts assume-role --duration-seconds="$ROLE_DURATION" --role-arn="$ROLE_ARN" --role-session-name="$(date +%Y%m%d-%H%M%S)" ${EXTERNAL_ID:+"--external-id=$EXTERNAL_ID"} --output json >"$CRED_TEMP"
+        aws ${STS_EXTRA_PARAMS} sts assume-role --duration-seconds="$ROLE_DURATION" --role-arn="$ROLE_ARN" --role-session-name="$(date +%Y%m%d-%H%M%S)" ${EXTERNAL_ID:+"--external-id=$EXTERNAL_ID"} --output json >"$CRED_TEMP"
 
         # Move the temporary files to their cached locations
         mv "$CRED_TEMP" "$ROLE_CRED_FILE"
