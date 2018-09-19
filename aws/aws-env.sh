@@ -559,7 +559,7 @@ AWS_ENV_EXPIRE="$(cat "$MFA_EXPIRE_FILE" 2>/dev/null || true)"
 #
 STS_EXTRA_PARAMS=
 if [[ "${REGION}" == 'us-gov'* ]]; then
-    STS_EXTRA_PARAMS="--endpoint-url=https://sts.${REGION}.amazonaws.com/"
+    STS_EXTRA_PARAMS="--endpoint-url=https://sts.${REGION}.amazonaws.com/  --region ${REGION}"
 fi
 
 # If session credentials expired or non-existant, prompt for MFA code (if
