@@ -3,7 +3,7 @@ show_help() { cat <<'EOF'
 aws-env: Wrapper for AWS temporary sessions using MFA and roles
 ===============================================================
 
-Copyright (c) 2017 FP Complete Corp.  
+Copyright (c) 2017 FP Complete Corp.
 Author and maintainer: Emanuel Borsboom <manny@fpcomplete.com>
 
 This aims to be the "ultimate" AWS temporary session wrapper.  Highlights:
@@ -513,12 +513,18 @@ else
         PROFILE_SECTION="profile $PROFILE"
     fi
 
-    [[ -n "$ROLE_ARN" ]] || ROLE_ARN="$(configfield "$AWS_CONFIG_FILE" role_arn "$PROFILE_SECTION")"
-    [[ -n "$SRC_PROFILE" ]] || SRC_PROFILE="$(configfield "$AWS_CONFIG_FILE" source_profile "$PROFILE_SECTION")"
-    [[ -n "$REGION" ]] || REGION="$(configfield "$AWS_CONFIG_FILE" region "$PROFILE_SECTION")"
-    MFA_SERIAL="$(configfield "$AWS_CONFIG_FILE" mfa_serial "$PROFILE_SECTION")"
-    EXTERNAL_ID="$(configfield "$AWS_CONFIG_FILE" external_id "$PROFILE_SECTION")"
-    [[ -n "$SRC_PROFILE" ]] || SRC_PROFILE="$PROFILE"
+    [[ -n "$ROLE_ARN" ]] || \
+        ROLE_ARN="$(configfield "$AWS_CONFIG_FILE" role_arn "$PROFILE_SECTION")"
+    [[ -n "$SRC_PROFILE" ]] || \
+        SRC_PROFILE="$(configfield "$AWS_CONFIG_FILE" source_profile "$PROFILE_SECTION")"
+    [[ -n "$REGION" ]] || \
+        REGION="$(configfield "$AWS_CONFIG_FILE" region "$PROFILE_SECTION")"
+    [[ -n "$MFA_SERIAL" ]] || \
+        MFA_SERIAL="$(configfield "$AWS_CONFIG_FILE" mfa_serial "$PROFILE_SECTION")"
+    [[ -n "${EXTERNAL_ID:-}" ]] || \
+        EXTERNAL_ID="$(configfield "$AWS_CONFIG_FILE" external_id "$PROFILE_SECTION")"
+    [[ -n "$SRC_PROFILE" ]] || \
+        SRC_PROFILE="$PROFILE"
 
     if [[ "$SRC_PROFILE" == "default" ]]; then
         SRC_PROFILE_SECTION="default"
