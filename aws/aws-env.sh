@@ -47,6 +47,7 @@ Usage
         [--profile=NAME|-p NAME] \
         [--mfa-serial=ARN|-m ARN] \
         [--role-arn=ARN|-r ARN] \
+        [--external-id=STRING|-e STRING] \
         [--federated|-f] \
         [--help] \
         [--] \
@@ -62,6 +63,8 @@ Usage
 `--mfa-serial ARN`: Override or set the MFA device ARN.
 
 `--role-arn ARN`: Override or set the ARN for the role to assume.
+
+`--external-id STRING`: Set a optional required external ID for the subsequent assume role call.
 
 `--federated`: Assume the given profile contains an active federated session (SAML, OpenID, ..).
 
@@ -391,6 +394,7 @@ AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
 PROFILE_ARG=
 MFA_SERIAL_ARG=
 ROLE_ARN_ARG=
+EXTERNAL_ID_ARG=
 FEDERATED_ARG=
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -430,6 +434,18 @@ while [[ $# -gt 0 ]]; do
             ROLE_ARN_ARG="$2"
             shift 2
             ;;
+        --external-id=*)
+            EXTERNAL_ID_ARG="${1#--external-id=}"
+            shift
+            ;;
+        --external-id)
+            EXTERNAL_ID_ARG="$2"
+            shift 2
+            ;;
+        -e)
+            EXTERNAL_ID_ARG="$2"
+            shift 2
+            ;;
         --federated|-f)
             FEDERATED_ARG="true"
             shift
@@ -465,6 +481,7 @@ fi
 
 [[ -z "$MFA_SERIAL_ARG" ]] || MFA_SERIAL="$MFA_SERIAL_ARG"
 [[ -z "$ROLE_ARN_ARG" ]] || ROLE_ARN="$ROLE_ARN_ARG"
+[[ -z "$EXTERNAL_ID_ARG" ]] || EXTERNAL_ID="$EXTERNAL_ID_ARG"
 
 #
 # Reset credentials environment variables to their original values.
