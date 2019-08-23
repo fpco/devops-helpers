@@ -3,7 +3,7 @@ show_help() { cat <<'EOF'
 aws-env: Wrapper for AWS temporary sessions using MFA and roles
 ===============================================================
 
-Copyright (c) 2017 FP Complete Corp.  
+Copyright (c) 2017 FP Complete Corp.
 Author and maintainer: Emanuel Borsboom <manny@fpcomplete.com>
 
 This aims to be the "ultimate" AWS temporary session wrapper.  Highlights:
@@ -585,6 +585,15 @@ if [[ "${REGION}" == 'us-gov'* ]]; then
 fi
 
 #
+# If we have to assume there is an active federation session
+# we trust the federation generated (thus cached) profile credentials
+#
+FED_EXTRA_PARAMS=
+if [[ "${FEDERATED_ARG}" == 'true' ]]; then
+    FED_EXTRA_PARAMS="--profile ${PROFILE}"
+fi
+
+#
 # If there is no active federation session
 # we create or use a cached temporary session
 #
@@ -629,15 +638,11 @@ if [[ ! -n "$FEDERATED_ARG" ]]; then
     # Set the AWS_* credentials environment variables from values in the cached or
     # just-created session credentials file
     load_cred_vars "$MFA_CRED_FILE" "$MFA_EXPIRE_FILE"
-fi
-
-#
-# If we have to assume there is an active federation session
-# we trust the federation generated (thus cached) profile credentials
-#
-FED_EXTRA_PARAMS=
-if [[ "${FEDERATED_ARG}" == 'true' ]]; then
-    FED_EXTRA_PARAMS="--profile ${PROFILE}"
+else
+    AWS_ACCESS_KEY_ID="$( aws ${FED_EXTRA_PARAMS} configure get aws_access_key_id )"
+    AWS_SECRET_ACCESS_KEY="$( aws ${FED_EXTRA_PARAMS} configure get aws_secret_access_key )"
+    AWS_SESSION_TOKEN="$( aws ${FED_EXTRA_PARAMS} configure get aws_session_token )"
+    AWS_SECURITY_TOKEN="$AWS_SESSION_TOKEN"
 fi
 
 #
