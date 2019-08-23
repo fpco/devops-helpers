@@ -45,6 +45,8 @@ Usage
         [--profile=NAME|-p NAME] \
         [--mfa-serial=ARN|-m ARN] \
         [--role-arn=ARN|-r ARN] \
+        [--external-id=STRING|-e STRING] \
+        [--federated|-f] \
         [--help] \
         [--] \
         [COMMAND [ARGS ...]]
@@ -59,6 +61,10 @@ Usage
 `--mfa-serial ARN`: Override or set the MFA device ARN.
 
 `--role-arn ARN`: Override or set the ARN for the role to assume.
+
+`--external-id STRING`: Set a optional required external ID for the subsequent assume role call.
+
+`--federated`: Assume the given profile contains an active federated session (SAML, OpenID, ..).
 
 `--help`: Display this help text and exit.
 
@@ -239,4 +245,3 @@ File locations
 By default, temporary credentials are stored in `~/.aws-env/`, AWS CLI
 configuration is read from `~/.aws/config`, and aws-env configuration is read
 from `~/.aws-env.config`.
-

@@ -47,6 +47,8 @@ Usage
         [--profile=NAME|-p NAME] \
         [--mfa-serial=ARN|-m ARN] \
         [--role-arn=ARN|-r ARN] \
+        [--external-id=STRING|-e STRING] \
+        [--federated|-f] \
         [--help] \
         [--] \
         [COMMAND [ARGS ...]]
@@ -61,6 +63,10 @@ Usage
 `--mfa-serial ARN`: Override or set the MFA device ARN.
 
 `--role-arn ARN`: Override or set the ARN for the role to assume.
+
+`--external-id STRING`: Set a optional required external ID for the subsequent assume role call.
+
+`--federated`: Assume the given profile contains an active federated session (SAML, OpenID, ..).
 
 `--help`: Display this help text and exit.
 
@@ -388,6 +394,8 @@ AWS_CONFIG_FILE="${AWS_CONFIG_FILE:-$HOME/.aws/config}"
 PROFILE_ARG=
 MFA_SERIAL_ARG=
 ROLE_ARN_ARG=
+EXTERNAL_ID_ARG=
+FEDERATED_ARG=
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --profile=*)
@@ -426,6 +434,22 @@ while [[ $# -gt 0 ]]; do
             ROLE_ARN_ARG="$2"
             shift 2
             ;;
+        --external-id=*)
+            EXTERNAL_ID_ARG="${1#--external-id=}"
+            shift
+            ;;
+        --external-id)
+            EXTERNAL_ID_ARG="$2"
+            shift 2
+            ;;
+        -e)
+            EXTERNAL_ID_ARG="$2"
+            shift 2
+            ;;
+        --federated|-f)
+            FEDERATED_ARG="true"
+            shift
+            ;;
         --help|-h)
             show_help
             exit 0
@@ -457,6 +481,7 @@ fi
 
 [[ -z "$MFA_SERIAL_ARG" ]] || MFA_SERIAL="$MFA_SERIAL_ARG"
 [[ -z "$ROLE_ARN_ARG" ]] || ROLE_ARN="$ROLE_ARN_ARG"
+[[ -z "$EXTERNAL_ID_ARG" ]] || EXTERNAL_ID="$EXTERNAL_ID_ARG"
 
 #
 # Reset credentials environment variables to their original values.
@@ -513,12 +538,18 @@ else
         PROFILE_SECTION="profile $PROFILE"
     fi
 
-    [[ -n "$ROLE_ARN" ]] || ROLE_ARN="$(configfield "$AWS_CONFIG_FILE" role_arn "$PROFILE_SECTION")"
-    [[ -n "$SRC_PROFILE" ]] || SRC_PROFILE="$(configfield "$AWS_CONFIG_FILE" source_profile "$PROFILE_SECTION")"
-    [[ -n "$REGION" ]] || REGION="$(configfield "$AWS_CONFIG_FILE" region "$PROFILE_SECTION")"
-    MFA_SERIAL="$(configfield "$AWS_CONFIG_FILE" mfa_serial "$PROFILE_SECTION")"
-    EXTERNAL_ID="$(configfield "$AWS_CONFIG_FILE" external_id "$PROFILE_SECTION")"
-    [[ -n "$SRC_PROFILE" ]] || SRC_PROFILE="$PROFILE"
+    [[ -n "$ROLE_ARN" ]] || \
+        ROLE_ARN="$(configfield "$AWS_CONFIG_FILE" role_arn "$PROFILE_SECTION")"
+    [[ -n "$SRC_PROFILE" ]] || \
+        SRC_PROFILE="$(configfield "$AWS_CONFIG_FILE" source_profile "$PROFILE_SECTION")"
+    [[ -n "$REGION" ]] || \
+        REGION="$(configfield "$AWS_CONFIG_FILE" region "$PROFILE_SECTION")"
+    [[ -n "$MFA_SERIAL" ]] || \
+        MFA_SERIAL="$(configfield "$AWS_CONFIG_FILE" mfa_serial "$PROFILE_SECTION")"
+    [[ -n "${EXTERNAL_ID:-}" ]] || \
+        EXTERNAL_ID="$(configfield "$AWS_CONFIG_FILE" external_id "$PROFILE_SECTION")"
+    [[ -n "$SRC_PROFILE" ]] || \
+        SRC_PROFILE="$PROFILE"
 
     if [[ "$SRC_PROFILE" == "default" ]]; then
         SRC_PROFILE_SECTION="default"
@@ -546,15 +577,6 @@ CRED_TEMP="$(mktemp "$CACHE_DIR/temp_credentials.XXXXX")"
 EXPIRE_TEMP="$(mktemp "$CACHE_DIR/temp_expire.XXXXX")"
 
 #
-# Create or use cached temporary session
-#
-
-MFA_CRED_PREFIX="$CACHE_DIR/${SRC_PROFILE}.${MFA_SERIAL//[:\/]/_}.session"
-MFA_CRED_FILE="${MFA_CRED_PREFIX}_credentials.json"
-MFA_EXPIRE_FILE="${MFA_CRED_PREFIX}_expire"
-AWS_ENV_EXPIRE="$(cat "$MFA_EXPIRE_FILE" 2>/dev/null || true)"
-
-#
 # Extra STS parameters to account for GovCloud region(s)
 #
 STS_EXTRA_PARAMS=
@@ -562,40 +584,66 @@ if [[ "${REGION}" == 'us-gov'* ]]; then
     STS_EXTRA_PARAMS="--endpoint-url=https://sts.${REGION}.amazonaws.com/  --region ${REGION}"
 fi
 
-# If session credentials expired or non-existant, prompt for MFA code (if
-# required) and get a session token, and cache the session credentials.
-if [[ ! -s "$MFA_CRED_FILE" || "$CURDATE" -ge "$AWS_ENV_EXPIRE" ]]; then
-    echo "[$(basename "$0")] Getting session token for profile '$PROFILE'${PROFILE_SOURCE_CONFIG:+ from $PROFILE_SOURCE_CONFIG}" >&2
-    if [[ -z "$ROLE_ARN" && -z "$MFA_SERIAL" ]]; then
-        echo "[$(basename "$0")] WARNING: No role_arn or mfa_serial found for profile $PROFILE" >&2
-    fi
-
-    # Prompt for MFA code if 'mfa_serial' set in config file
-    [[ -z "$MFA_SERIAL" ]] || \
-        read -p "[$(basename "$0")] Enter MFA code for $MFA_SERIAL: " -r MFA_CODE </dev/tty
-
-    # Record the refresh time in the temporary session expire file
-    NEW_EXPIRE="$(( CURDATE + MFA_DURATION * MFA_REFRESH / 100 ))"
-    echo "$NEW_EXPIRE" >"$EXPIRE_TEMP"
-
-    # Get the session token and save credentials in temporary credentials file
-    touch "$CRED_TEMP"
-    chmod 0600 "$CRED_TEMP"
-    if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
-        aws ${STS_EXTRA_PARAMS} sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
-    else
-        aws ${STS_EXTRA_PARAMS} --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
-    fi
-
-    # Move the temporary files to their cached locations
-    mv "$CRED_TEMP" "$MFA_CRED_FILE"
-    mv "$EXPIRE_TEMP" "$MFA_EXPIRE_FILE"
-    AWS_ENV_EXPIRE="$NEW_EXPIRE"
+#
+# If we have to assume there is an active federation session
+# we trust the federation generated (thus cached) profile credentials
+#
+FED_EXTRA_PARAMS=
+if [[ "${FEDERATED_ARG}" == 'true' ]]; then
+    FED_EXTRA_PARAMS="--profile ${PROFILE}"
 fi
 
-# Set the AWS_* credentials environment variables from values in the cached or
-# just-created session credentials file
-load_cred_vars "$MFA_CRED_FILE" "$MFA_EXPIRE_FILE"
+#
+# If there is no active federation session
+# we create or use a cached temporary session
+#
+
+if [[ ! -n "$FEDERATED_ARG" ]]; then
+    MFA_CRED_PREFIX="$CACHE_DIR/${SRC_PROFILE}.${MFA_SERIAL//[:\/]/_}.session"
+    MFA_CRED_FILE="${MFA_CRED_PREFIX}_credentials.json"
+    MFA_EXPIRE_FILE="${MFA_CRED_PREFIX}_expire"
+    AWS_ENV_EXPIRE="$(cat "$MFA_EXPIRE_FILE" 2>/dev/null || true)"
+
+    # If session credentials expired or non-existant, prompt for MFA code (if
+    # required) and get a session token, and cache the session credentials.
+    if [[ ! -s "$MFA_CRED_FILE" || "$CURDATE" -ge "$AWS_ENV_EXPIRE" ]]; then
+        echo "[$(basename "$0")] Getting session token for profile '$PROFILE'${PROFILE_SOURCE_CONFIG:+ from $PROFILE_SOURCE_CONFIG}" >&2
+        if [[ -z "$ROLE_ARN" && -z "$MFA_SERIAL" ]]; then
+            echo "[$(basename "$0")] WARNING: No role_arn or mfa_serial found for profile $PROFILE" >&2
+        fi
+
+        # Prompt for MFA code if 'mfa_serial' set in config file
+        [[ -z "$MFA_SERIAL" ]] || \
+            read -p "[$(basename "$0")] Enter MFA code for $MFA_SERIAL: " -r MFA_CODE </dev/tty
+
+        # Record the refresh time in the temporary session expire file
+        NEW_EXPIRE="$(( CURDATE + MFA_DURATION * MFA_REFRESH / 100 ))"
+        echo "$NEW_EXPIRE" >"$EXPIRE_TEMP"
+
+        # Get the session token and save credentials in temporary credentials file
+        touch "$CRED_TEMP"
+        chmod 0600 "$CRED_TEMP"
+        if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
+            aws ${STS_EXTRA_PARAMS} sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
+        else
+            aws ${STS_EXTRA_PARAMS} --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
+        fi
+
+        # Move the temporary files to their cached locations
+        mv "$CRED_TEMP" "$MFA_CRED_FILE"
+        mv "$EXPIRE_TEMP" "$MFA_EXPIRE_FILE"
+        AWS_ENV_EXPIRE="$NEW_EXPIRE"
+    fi
+
+    # Set the AWS_* credentials environment variables from values in the cached or
+    # just-created session credentials file
+    load_cred_vars "$MFA_CRED_FILE" "$MFA_EXPIRE_FILE"
+else
+    AWS_ACCESS_KEY_ID="$( aws ${FED_EXTRA_PARAMS} configure get aws_access_key_id )"
+    AWS_SECRET_ACCESS_KEY="$( aws ${FED_EXTRA_PARAMS} configure get aws_secret_access_key )"
+    AWS_SESSION_TOKEN="$( aws ${FED_EXTRA_PARAMS} configure get aws_session_token )"
+    AWS_SECURITY_TOKEN="$AWS_SESSION_TOKEN"
+fi
 
 #
 # Assume the role or used cached credentials, if the 'role_arn' is set in the
@@ -620,7 +668,7 @@ if [[ -n "$ROLE_ARN" ]]; then
         # Assume the role and save role credentials in temporary credential file
         touch "$CRED_TEMP"
         chmod 0600 "$CRED_TEMP"
-        aws ${STS_EXTRA_PARAMS} sts assume-role --duration-seconds="$ROLE_DURATION" --role-arn="$ROLE_ARN" --role-session-name="$(date +%Y%m%d-%H%M%S)" ${EXTERNAL_ID:+"--external-id=$EXTERNAL_ID"} --output json >"$CRED_TEMP"
+        aws ${STS_EXTRA_PARAMS} ${FED_EXTRA_PARAMS} sts assume-role --duration-seconds="$ROLE_DURATION" --role-arn="$ROLE_ARN" --role-session-name="$(date +%Y%m%d-%H%M%S)" ${EXTERNAL_ID:+"--external-id=$EXTERNAL_ID"} --output json >"$CRED_TEMP"
 
         # Move the temporary files to their cached locations
         mv "$CRED_TEMP" "$ROLE_CRED_FILE"
