@@ -3,7 +3,7 @@ show_help() { cat <<'EOF'
 aws-env: Wrapper for AWS temporary sessions using MFA and roles
 ===============================================================
 
-Copyright (c) 2017 FP Complete Corp.
+Copyright (c) 2017 FP Complete Corp.  
 Author and maintainer: Emanuel Borsboom <manny@fpcomplete.com>
 
 This aims to be the "ultimate" AWS temporary session wrapper.  Highlights:
