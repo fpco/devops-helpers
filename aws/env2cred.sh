@@ -8,7 +8,7 @@ Author and maintainer:
 
 This tools aims to automate the writing of credentials to the ~/.aws/credentials
 file from the credentials currently set in the environmental variables. This tools
-comes from the necessity of needing the credentials in that file for some applications
+comes from the necessity of having the credentials in that file for some applications
 like terraform that read from it.
 
 Installation
