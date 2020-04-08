@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 show_help() { cat <<'EOF'
-aws-env: Wrapper for AWS temporary sessions using MFA and roles
+aws-env: Wrapper for AWS temporary sessions using MFA/SSO and roles
 ===============================================================
 
 Copyright (c) 2017 FP Complete Corp.  
@@ -16,6 +16,7 @@ This aims to be the "ultimate" AWS temporary session wrapper.  Highlights:
   - Uses the same configuration files as the AWS CLI, with some extensions
   - Supports directory context-sensitive configuration in `aws-env.config`
   - Only non-standard dependency is the AWS CLI
+  - NEW: support for aws sso profiles.
 
 Limitations
 
