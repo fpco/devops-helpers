@@ -275,7 +275,7 @@ configfield() {
 }
 
 # 'load_cred_vars FILEPATH' set AWS_* environment variables from a credentials
-# JSON file output by 'aws sts'.
+# JSON file output by 'aws sts', or an SSO cache file.
 load_cred_vars() {
     AWS_ACCESS_KEY_ID="$(grep AccessKeyId "$1"|sed 's/.*: "\(.*\)".*/\1/')"
     AWS_SECRET_ACCESS_KEY="$(grep SecretAccessKey "$1"|sed 's/.*: "\(.*\)".*/\1/')"
@@ -604,22 +604,30 @@ fi
 # SSO (if required) and get a session token, and cache the session credentials.
 if [[ ! -s "$CRED_FILE" || "$CURDATE" -ge "$AWS_ENV_EXPIRE" ]]; then
     if [[ -n "$SSO_START_URL" && -n "$SSO_ACCOUNT_ID" && -n "$SSO_ROLE_NAME" ]]; then
+
+        # Fail if aws version is too old
         if [[ "$AWS_VERSION_MAYOR" -lt "2" ]]; then
             echo "[$(basename "$0")] ERROR: aws version is less than 2, can't use aws sso, please update aws cli tool." >&2
             exit 1
         fi
+
+        # Get SSO login token and perform login if necessary.
         CACHE_FILE="$(get_sso_cache_file $SSO_START_URL $REGION $CURDATE)"
         if [[ -z "$CACHE_FILE" ]]; then
             aws sso login --profile="$PROFILE"
             CACHE_FILE="$(get_sso_cache_file $SSO_START_URL $REGION $CURDATE)"
         fi
         SSO_TOKEN="$(get_json_field accessToken $CACHE_FILE)"
+
+        # Get credential
         aws sso get-role-credentials --profile="$PROFILE" --access-token $SSO_TOKEN --region $REGION --role-name $SSO_ROLE_NAME --account-id $SSO_ACCOUNT_ID >"$CRED_TEMP"
         NEW_EXPIRE="$(grep expiration "$CRED_TEMP"|sed 's/.*: \(.*\).*/\1/')"
         NEW_EXPIRE=${NEW_EXPIRE::-3}
         SSO_ACCESS_KEY_ID="$(grep accessKeyId "$CRED_TEMP"|sed 's/.*: "\(.*\)".*/\1/')"
         SSO_SECRET_ACCESS_KEY="$(grep secretAccessKey "$CRED_TEMP"|sed 's/.*: "\(.*\)".*/\1/')"
         SSO_SESSION_TOKEN="$(grep sessionToken "$CRED_TEMP"|sed 's/.*: "\(.*\)".*/\1/')"
+
+        # Save expire date and credential to files.
         echo "$NEW_EXPIRE" >"$EXPIRE_TEMP"
         echo "{" >"$CRED_TEMP"
         echo "    \"AccessKeyId\": \"$SSO_ACCESS_KEY_ID\"" >>"$CRED_TEMP"
