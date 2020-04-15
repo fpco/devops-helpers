@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 show_help() { cat <<'EOF'
-aws-env: Wrapper for AWS temporary sessions using MFA and roles
+aws-env: Wrapper for AWS temporary sessions using MFA/SSO and roles
 ===============================================================
 
 Copyright (c) 2017 FP Complete Corp.  
@@ -16,6 +16,7 @@ This aims to be the "ultimate" AWS temporary session wrapper.  Highlights:
   - Uses the same configuration files as the AWS CLI, with some extensions
   - Supports directory context-sensitive configuration in `aws-env.config`
   - Only non-standard dependency is the AWS CLI
+  - NEW: support for aws sso profiles.
 
 Limitations
 
@@ -275,12 +276,42 @@ configfield() {
 }
 
 # 'load_cred_vars FILEPATH' set AWS_* environment variables from a credentials
-# JSON file output by 'aws sts'.
+# JSON file output by 'aws sts', or an SSO cache file.
 load_cred_vars() {
     AWS_ACCESS_KEY_ID="$(grep AccessKeyId "$1"|sed 's/.*: "\(.*\)".*/\1/')"
     AWS_SECRET_ACCESS_KEY="$(grep SecretAccessKey "$1"|sed 's/.*: "\(.*\)".*/\1/')"
     AWS_SESSION_TOKEN="$(grep SessionToken "$1"|sed 's/.*: "\(.*\)".*/\1/')"
     AWS_SECURITY_TOKEN="$AWS_SESSION_TOKEN"
+}
+
+get_json_field() {
+    sed -r 's/.*\"'$1'\": \"([^\"]*)\".*$/\1/' $2
+}
+
+get_sso_cache_file() {
+    TMP_CACHE_FILE=
+    TMP_CACHE_URL=
+    TMP_CACHE_REGION=
+    TMP_CACHE_TIME=
+    if [[ "$(echo $HOME/.aws/sso/cache/*.json)" != "$HOME/.aws/sso/cache/*.json" ]]; then
+        for FILE in $HOME/.aws/sso/cache/*.json
+        do
+            TMP_CACHE_URL="$(get_json_field startUrl $FILE || echo)"
+            TMP_CACHE_REGION="$(get_json_field region $FILE || echo)"
+            TMP_CACHE_TIME="$(get_json_field expiresAt $FILE || echo)"
+            TMP_CACHE_TIME="$(date --date=$TMP_CACHE_TIME +%s)"
+            if [[ "$TMP_CACHE_URL" == "$1" && "$TMP_CACHE_REGION" == "$2" && "$TMP_CACHE_TIME" -gt "$3" ]]; then
+                TMP_CACHE_FILE=$FILE
+                break
+            fi
+        done
+    fi
+    echo $TMP_CACHE_FILE
+}
+
+get_aws_version(){
+    AWS_VERSION="$(aws --version |sed -r 's/aws-cli\/([^ ]+).*$/\1/')"
+    AWS_VERSION_MAYOR="$(echo "$AWS_VERSION" |sed -r 's/([0123456789]+).*$/\1/')"
 }
 
 # 'load_env_config FILEPATH' set configuration variables from an aws-env config
@@ -356,6 +387,11 @@ ROLE_DURATION=
 MFA_REFRESH=
 ROLE_REFRESH=
 PROMPT_FORMAT=
+AWS_VERSION=
+AWS_VERSION_MAYOR=
+SSO_START_URL=
+SSO_ACCOUNT_ID=
+SSO_ROLE_NAME=
 pushd . >/dev/null
 while [[ "$PWD" != "/" && "$PWD" != "$HOME" ]]; do
     load_env_config "$PWD/.aws-env.config"
@@ -364,6 +400,7 @@ while [[ "$PWD" != "/" && "$PWD" != "$HOME" ]]; do
 done
 popd >/dev/null
 load_env_config "$HOME/.aws-env.config"
+get_aws_version
 
 #
 # Defaults
@@ -513,9 +550,13 @@ else
         PROFILE_SECTION="profile $PROFILE"
     fi
 
+    SSO_START_URL="$(configfield "$AWS_CONFIG_FILE" sso_start_url "$PROFILE_SECTION")"
+    SSO_ACCOUNT_ID="$(configfield "$AWS_CONFIG_FILE" sso_account_id "$PROFILE_SECTION")"
+    SSO_ROLE_NAME="$(configfield "$AWS_CONFIG_FILE" sso_role_name "$PROFILE_SECTION")"
     [[ -n "$ROLE_ARN" ]] || ROLE_ARN="$(configfield "$AWS_CONFIG_FILE" role_arn "$PROFILE_SECTION")"
     [[ -n "$SRC_PROFILE" ]] || SRC_PROFILE="$(configfield "$AWS_CONFIG_FILE" source_profile "$PROFILE_SECTION")"
     [[ -n "$REGION" ]] || REGION="$(configfield "$AWS_CONFIG_FILE" region "$PROFILE_SECTION")"
+    [[ -n "$REGION" ]] || REGION="$(configfield "$AWS_CONFIG_FILE" sso_region "$PROFILE_SECTION")"
     MFA_SERIAL="$(configfield "$AWS_CONFIG_FILE" mfa_serial "$PROFILE_SECTION")"
     EXTERNAL_ID="$(configfield "$AWS_CONFIG_FILE" external_id "$PROFILE_SECTION")"
     [[ -n "$SRC_PROFILE" ]] || SRC_PROFILE="$PROFILE"
@@ -526,7 +567,7 @@ else
         SRC_PROFILE_SECTION="profile $SRC_PROFILE"
     fi
 
-    [[ -n "$MFA_SERIAL" ]] || \
+    [[ -n "$MFA_SERIAL" && -n "$SSO_START_URL" && -n "$SSO_ACCOUNT_ID" && -n "$SSO_ROLE_NAME" ]] || \
         MFA_SERIAL="$(configfield "$AWS_CONFIG_FILE" mfa_serial "$SRC_PROFILE_SECTION")"
     [[ -n "$REGION" ]] || \
         REGION="$(configfield "$AWS_CONFIG_FILE" region "$SRC_PROFILE_SECTION")"
@@ -549,10 +590,10 @@ EXPIRE_TEMP="$(mktemp "$CACHE_DIR/temp_expire.XXXXX")"
 # Create or use cached temporary session
 #
 
-MFA_CRED_PREFIX="$CACHE_DIR/${SRC_PROFILE}.${MFA_SERIAL//[:\/]/_}.session"
-MFA_CRED_FILE="${MFA_CRED_PREFIX}_credentials.json"
-MFA_EXPIRE_FILE="${MFA_CRED_PREFIX}_expire"
-AWS_ENV_EXPIRE="$(cat "$MFA_EXPIRE_FILE" 2>/dev/null || true)"
+CRED_PREFIX="$CACHE_DIR/${SRC_PROFILE}.${MFA_SERIAL//[:\/]/_}$SSO_ACCOUNT_ID$SSO_ROLE_NAME.session"
+CRED_FILE="${CRED_PREFIX}_credentials.json"
+EXPIRE_FILE="${CRED_PREFIX}_expire"
+AWS_ENV_EXPIRE="$(cat "$EXPIRE_FILE" 2>/dev/null || true)"
 
 #
 # Extra STS parameters to account for GovCloud region(s)
@@ -562,40 +603,75 @@ if [[ "${REGION}" == 'us-gov'* ]]; then
     STS_EXTRA_PARAMS="--endpoint-url=https://sts.${REGION}.amazonaws.com/  --region ${REGION}"
 fi
 
-# If session credentials expired or non-existant, prompt for MFA code (if
-# required) and get a session token, and cache the session credentials.
-if [[ ! -s "$MFA_CRED_FILE" || "$CURDATE" -ge "$AWS_ENV_EXPIRE" ]]; then
-    echo "[$(basename "$0")] Getting session token for profile '$PROFILE'${PROFILE_SOURCE_CONFIG:+ from $PROFILE_SOURCE_CONFIG}" >&2
-    if [[ -z "$ROLE_ARN" && -z "$MFA_SERIAL" ]]; then
-        echo "[$(basename "$0")] WARNING: No role_arn or mfa_serial found for profile $PROFILE" >&2
-    fi
+# If session credentials expired or non-existant, prompt for MFA code or
+# SSO (if required) and get a session token, and cache the session credentials.
+if [[ ! -s "$CRED_FILE" || "$CURDATE" -ge "$AWS_ENV_EXPIRE" ]]; then
+    if [[ -n "$SSO_START_URL" && -n "$SSO_ACCOUNT_ID" && -n "$SSO_ROLE_NAME" ]]; then
 
-    # Prompt for MFA code if 'mfa_serial' set in config file
-    [[ -z "$MFA_SERIAL" ]] || \
-        read -p "[$(basename "$0")] Enter MFA code for $MFA_SERIAL: " -r MFA_CODE </dev/tty
+        # Fail if aws version is too old
+        if [[ "$AWS_VERSION_MAYOR" -lt "2" ]]; then
+            echo "[$(basename "$0")] ERROR: aws version is less than 2, can't use aws sso, please update aws cli tool." >&2
+            exit 1
+        fi
 
-    # Record the refresh time in the temporary session expire file
-    NEW_EXPIRE="$(( CURDATE + MFA_DURATION * MFA_REFRESH / 100 ))"
-    echo "$NEW_EXPIRE" >"$EXPIRE_TEMP"
+        # Get SSO login token and perform login if necessary.
+        CACHE_FILE="$(get_sso_cache_file $SSO_START_URL $REGION $CURDATE)"
+        if [[ -z "$CACHE_FILE" ]]; then
+            # Send output to null to prevent errors when using eval, aws sso is noisy.
+            aws sso login --profile="$PROFILE" >> /dev/null
+            CACHE_FILE="$(get_sso_cache_file $SSO_START_URL $REGION $CURDATE)"
+        fi
+        SSO_TOKEN="$(get_json_field accessToken $CACHE_FILE)"
 
-    # Get the session token and save credentials in temporary credentials file
-    touch "$CRED_TEMP"
-    chmod 0600 "$CRED_TEMP"
-    if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
-        aws ${STS_EXTRA_PARAMS} sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
+        # Get credential
+        aws sso get-role-credentials --profile="$PROFILE" --access-token $SSO_TOKEN --region $REGION --role-name $SSO_ROLE_NAME --account-id $SSO_ACCOUNT_ID >"$CRED_TEMP"
+        NEW_EXPIRE="$(grep expiration "$CRED_TEMP"|sed 's/.*: \(.*\).*/\1/')"
+        NEW_EXPIRE=${NEW_EXPIRE::-3}
+        SSO_ACCESS_KEY_ID="$(grep accessKeyId "$CRED_TEMP"|sed 's/.*: "\(.*\)".*/\1/')"
+        SSO_SECRET_ACCESS_KEY="$(grep secretAccessKey "$CRED_TEMP"|sed 's/.*: "\(.*\)".*/\1/')"
+        SSO_SESSION_TOKEN="$(grep sessionToken "$CRED_TEMP"|sed 's/.*: "\(.*\)".*/\1/')"
+
+        # Save expire date and credential to files.
+        echo "$NEW_EXPIRE" >"$EXPIRE_TEMP"
+        echo "{" >"$CRED_TEMP"
+        echo "    \"AccessKeyId\": \"$SSO_ACCESS_KEY_ID\"" >>"$CRED_TEMP"
+        echo "    \"SecretAccessKey\": \"$SSO_SECRET_ACCESS_KEY\"" >>"$CRED_TEMP"
+        echo "    \"SessionToken\": \"$SSO_SESSION_TOKEN\"" >>"$CRED_TEMP"
+        echo "}" >>"$CRED_TEMP"
+        chmod 0600 "$CRED_TEMP"
     else
-        aws ${STS_EXTRA_PARAMS} --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
+        echo "[$(basename "$0")] Getting session token for profile '$PROFILE'${PROFILE_SOURCE_CONFIG:+ from $PROFILE_SOURCE_CONFIG}" >&2
+        if [[ -z "$ROLE_ARN" && -z "$MFA_SERIAL" ]]; then
+            echo "[$(basename "$0")] WARNING: No role_arn or mfa_serial found for profile $PROFILE" >&2
+        fi
+
+        # Prompt for MFA code if 'mfa_serial' set in config file
+        [[ -z "$MFA_SERIAL" ]] || \
+            read -p "[$(basename "$0")] Enter MFA code for $MFA_SERIAL: " -r MFA_CODE </dev/tty
+
+        # Record the refresh time in the temporary session expire file
+        NEW_EXPIRE="$(( CURDATE + MFA_DURATION * MFA_REFRESH / 100 ))"
+        echo "$NEW_EXPIRE" >"$EXPIRE_TEMP"
+
+        # Get the session token and save credentials in temporary credentials file
+        touch "$CRED_TEMP"
+        chmod 0600 "$CRED_TEMP"
+        if [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
+            aws ${STS_EXTRA_PARAMS} sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
+        else
+            aws ${STS_EXTRA_PARAMS} --profile="$SRC_PROFILE" sts get-session-token --duration-seconds="$MFA_DURATION" ${MFA_SERIAL:+"--serial-number=$MFA_SERIAL" "--token-code=$MFA_CODE"} --output json >"$CRED_TEMP"
+        fi
     fi
 
     # Move the temporary files to their cached locations
-    mv "$CRED_TEMP" "$MFA_CRED_FILE"
-    mv "$EXPIRE_TEMP" "$MFA_EXPIRE_FILE"
+    mv "$CRED_TEMP" "$CRED_FILE"
+    mv "$EXPIRE_TEMP" "$EXPIRE_FILE"
     AWS_ENV_EXPIRE="$NEW_EXPIRE"
 fi
 
 # Set the AWS_* credentials environment variables from values in the cached or
 # just-created session credentials file
-load_cred_vars "$MFA_CRED_FILE" "$MFA_EXPIRE_FILE"
+load_cred_vars "$CRED_FILE" "$EXPIRE_FILE"
 
 #
 # Assume the role or used cached credentials, if the 'role_arn' is set in the
