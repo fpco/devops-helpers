@@ -293,17 +293,19 @@ get_sso_cache_file() {
     TMP_CACHE_URL=
     TMP_CACHE_REGION=
     TMP_CACHE_TIME=
-    for FILE in $HOME/.aws/sso/cache/*
-    do
-        TMP_CACHE_URL="$(get_json_field startUrl $FILE || echo)"
-        TMP_CACHE_REGION="$(get_json_field region $FILE || echo)"
-        TMP_CACHE_TIME="$(get_json_field expiresAt $FILE || echo)"
-        TMP_CACHE_TIME="$(date --date=$TMP_CACHE_TIME +%s)"
-        if [[ "$TMP_CACHE_URL" == "$1" && "$TMP_CACHE_REGION" == "$2" && "$TMP_CACHE_TIME" -gt "$3" ]]; then
-            TMP_CACHE_FILE=$FILE
-            break
-        fi
-    done
+    if [[ "$(echo $HOME/.aws/sso/cache/*.json)" != "$HOME/.aws/sso/cache/*.json" ]]; then
+        for FILE in $HOME/.aws/sso/cache/*.json
+        do
+            TMP_CACHE_URL="$(get_json_field startUrl $FILE || echo)"
+            TMP_CACHE_REGION="$(get_json_field region $FILE || echo)"
+            TMP_CACHE_TIME="$(get_json_field expiresAt $FILE || echo)"
+            TMP_CACHE_TIME="$(date --date=$TMP_CACHE_TIME +%s)"
+            if [[ "$TMP_CACHE_URL" == "$1" && "$TMP_CACHE_REGION" == "$2" && "$TMP_CACHE_TIME" -gt "$3" ]]; then
+                TMP_CACHE_FILE=$FILE
+                break
+            fi
+        done
+    fi
     echo $TMP_CACHE_FILE
 }
 
@@ -615,7 +617,8 @@ if [[ ! -s "$CRED_FILE" || "$CURDATE" -ge "$AWS_ENV_EXPIRE" ]]; then
         # Get SSO login token and perform login if necessary.
         CACHE_FILE="$(get_sso_cache_file $SSO_START_URL $REGION $CURDATE)"
         if [[ -z "$CACHE_FILE" ]]; then
-            aws sso login --profile="$PROFILE"
+            # Send output to null to prevent errors when using eval, aws sso is noisy.
+            aws sso login --profile="$PROFILE" >> /dev/null
             CACHE_FILE="$(get_sso_cache_file $SSO_START_URL $REGION $CURDATE)"
         fi
         SSO_TOKEN="$(get_json_field accessToken $CACHE_FILE)"
